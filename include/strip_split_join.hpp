@@ -6,51 +6,35 @@
 using namespace std;
 
 
-/*
-	去掉字符串两端的特殊字符
-	str -> 字符串
-	ch -> 特殊字符
-*/
-string strip(const string & str, char ch=' ');
+/**
+ * Remove special characters at both ends of the string
+ * str -> String
+ * ch -> Special characters
+**/
+string strip(const string& str, char ch=' ');
 
 
-/*
-	对字符串进行拆分
-	str -> 字符串
-	delim -> 拆分的字符
-*/
-vector<string> split(const string & str, const string & delim);
+/**
+ * Split the string
+ * str -> String
+ * delim -> Split characters
+**/
+vector<string> split(const string& str, const string & delim);
 
+/**
+ * String join merging
+ * val -> The container to be joined
+ * delim -> Characters added between container elements
+**/
+template<typename T>
+string join(vector<T>& val, string delim);
 
-/*
-	字符串join合并
-	val -> 需要join的容器
-	delim -> 容器元素之间加入的字符
-*/
-string join(vector<int> & val, string delim);
-
-
-/*
-	字符串join合并
-	val -> 需要join的容器
-	delim -> 容器元素之间加入的字符
-*/
-string join(vector<long int> & val, string delim);
-
-
-/*
-	字符串join合并
-	val -> 需要join的容器
-	delim -> 容器元素之间加入的字符
-*/
-string join(vector<float> & val, string delim);
-
-
-/*
-	字符串join合并
-	val -> 需要join的容器
-	delim -> 容器元素之间加入的字符
-*/
-string join(vector<string> & val, string delim);
+/**
+ * String join merging
+ * val -> The container to be joined
+ * delim -> Characters added between container elements
+**/
+template<typename T>
+string join(const vector<T>& val, string delim);
 
 #endif

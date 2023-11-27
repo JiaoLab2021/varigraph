@@ -116,6 +116,9 @@ void BloomFilter::clear() {
 }
 
 void BloomFilter::save(const string& filename) const {
+    // log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom filter saved to file: " << filename << endl;
+
     std::ofstream file(filename, std::ios::binary);
     if (file) {
         // Holds the size of the bloom filter and the number of hash functions
@@ -133,8 +136,6 @@ void BloomFilter::save(const string& filename) const {
         }
         
         file.close();
-        cerr << "[" << __func__ << "::" << getTime() << "] "
-            << "Counting Bloom filter saved to file: " << filename << endl;
     } else {
         cerr << "[" << __func__ << "::" << getTime() << "] "
             << "'" << filename << "': No such file or directory." << endl;
@@ -143,6 +144,9 @@ void BloomFilter::save(const string& filename) const {
 }
 
 void BloomFilter::load(const string& filename) {
+    // log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom filter loaded from file: " << filename << endl;
+
     std::ifstream file(filename, std::ios::binary);
     if (file) {
         // Load size of bloom filter and number of hash functions
@@ -166,9 +170,8 @@ void BloomFilter::load(const string& filename) {
         }
         
         file.close();
-        cerr << "[" << __func__ << "::" << getTime() << "] "
-            << "Counting Bloom filter loaded from file: " << filename << endl;
     } else {
+        // log
         cerr << "[" << __func__ << "::" << getTime() << "] "
             << "'" << filename << "': No such file or directory." << endl;
         exit(1);

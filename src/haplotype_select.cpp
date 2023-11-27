@@ -75,17 +75,26 @@ void HaplotypeSelect::generate_sparse_frequency_vector() {
 }
 
 
-void HaplotypeSelect::get_top_indices(int numIndices) {
+unordered_map<uint16_t, double> HaplotypeSelect::get_top_indices(int numIndices) {
     std::priority_queue<std::pair<double, uint16_t>, std::vector<std::pair<double, uint16_t> >, ComparePair> pq;  // descending order
+    double sum = 0.0;  // For summation
+
     for (uint16_t i = 0; i < freqVec_.size(); i++) {
         pq.push(std::make_pair(freqVec_[i], i));
+        sum += freqVec_[i];
+
         if (pq.size() > numIndices) {
+            sum -= pq.top().first;
             pq.pop();
         }
     }
 
+    unordered_map<uint16_t, double> hapIdxScoreMap;  // map<hapIdx, possibility>
     while (!pq.empty()) {
         mTopHapVec.push_back(pq.top().second);
+        hapIdxScoreMap[pq.top().second] = pq.top().first / sum;  // normalization
         pq.pop();
     }
+
+    return hapIdxScoreMap;
 }

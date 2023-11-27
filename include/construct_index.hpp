@@ -14,6 +14,7 @@
 #include <malloc.h>
 #include <iterator>
 #include <sstream>
+#include <iomanip>
 
 #include "get_time.hpp"
 #include "strip_split_join.hpp"
@@ -40,33 +41,35 @@
 using namespace std;
 
 
-// kmer coverage and frequency structure
-struct kmerCovFre
-{
+// k-mer iterator and haplotype information
+struct kmerCovFreBitVec {
     uint8_t c = 0;  // coverage: read
     uint8_t f = 0;  // frequency: genome or graph
-};
 
-// k-mer iterator and haplotype information
-struct kmerHashHap
-{
-    uint64_t kmerHash;  // Hash value of k-mer
     vector<int8_t> BitVec;  // haplotype bitmap: 0000 0000, Each bits represents a haplotype, 0->False 1->True
 
-    kmerHashHap() : kmerHash(0), BitVec() {}
-
-    kmerHashHap(uint64_t hash, const vector<int8_t>& bitVector) : kmerHash(hash), BitVec(bitVector) {}
+    kmerCovFreBitVec() {}
 
     void clear() {
-        kmerHash = 0;
+        c = 0;
+        f = 0;
         vector<int8_t>().swap(BitVec);
+    }
+
+    // overloaded assignment operator
+    kmerCovFreBitVec& operator=(const kmerCovFreBitVec& other) {
+        if (this != &other) {
+            c = other.c;
+            f = other.f;
+            BitVec = other.BitVec;
+        }
+        return *this;
     }
 };
 
 
 // Forward and backward algorithm scoring
-struct HMMScore
-{
+struct HMMScore {
     long double a = 0;  // store alpha scores of haplotype combination
     long double b = 0;  // Store betas of haplotype combination
 
@@ -74,17 +77,31 @@ struct HMMScore
 };
 
 
-struct nodeSrt
+// posterior
+struct posteriorStr
 {
-    unordered_map<uint16_t, string> seqMap;  // Store sequence information of query: map<gt, seq>
+    long double probability;  // Posterior probability
+    vector<uint16_t> hapVec;  // haplotype information
+    vector<uint64_t> kmerNumVec;  // The number of k-mers corresponding to the haplotype
+    vector<float> kmerAveCovVec;  // The k-mer average depth corresponding to the haplotype
+
+    float NodeKmerAveCov;  // Node k-mer average depth
+
+    posteriorStr() : probability(0.0), NodeKmerAveCov(0.0) {}
+};
+
+
+struct nodeSrt {
+    vector<string> seqVec;  // Store sequence information of query: vector<seq>
 
     vector<uint16_t> hapGtVec;  // Genotype information for each haplotype at this locus: vector<GT>
 
-    vector<kmerHashHap> kmerHashHapVec;  // Whether the storage haplotype contains the corresponding kmer: map<kmerHash, vector<int8_t> >:  0000 0000, Each bits represents a haplotype, 0->False 1->True
-
+    vector<uint64_t> kmerHashVec;  // All k-mer hashes in the node, vector<kmerHash>
+    vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator> GraphKmerHashHapStrMapIterVec;  // Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
+    
     vector<HMMScore> HMMScoreVec;  // store all alpha and betas scores of nodes
 
-    tuple<long double, vector<uint16_t> > posteriorTup{0.0, vector<uint16_t>()};  // maximum posterior probability
+    posteriorStr posteriorInfo;  // maximum posterior probability
 };
 
 
@@ -96,44 +113,83 @@ private:
     string vcfFileName_;
 
     const string& inputMbfFileName_;  // Load Counting Bloom Filter index from file
+    const string& inputGraphFileName_;  // load the Genome Geaph from disk
+
     const string& outputMbfFileName_;  // Save Counting Bloom Filter index to file
+    const string& outputGraphFileName_;  // save the Genome Geaph to disk
+
+    bool fastMode_;
 
     uint32_t kmerLen_;
 
-    string prefix_;
+    string sampleName_;
 
-    uint32_t ploidy_;
-
-    uint32_t threads_;
+    uint32_t vcfPloidy_;
 
     bool debug_;
 
-    uint64_t genomeSize_ = 0;
+    uint32_t threads_;
 
 public:
     map<string, map<uint32_t, nodeSrt> > mGraphMap;  // Store the sequence and k-mer information of the graph: map<chr, map<nodeStart, nodeSrt> >
-    unordered_map<uint64_t, kmerCovFre> mGraphKmerCovFreMap;  // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFre>
+    unordered_map<uint64_t, kmerCovFreBitVec> mGraphKmerHashHapStrMap;  // Record the coverage and frequency of all k-mers in the graph: map<kmerHash,kmerCovFreBitVec>
+
     map<uint16_t, string> mHapMap;  // Store haplotype information: map<hapIdx, hapName>
     uint16_t mHapNum;
 
     string mVcfHead;  // Store VCF file comment lines
-    map<string, map<uint32_t, string> > mVcfInfoMap;  // Store VCF file information
+    map<string, map<uint32_t, vector<string> > > mVcfInfoMap;  // Store VCF file information
+
+    // number
+    uint32_t mSnpNum = 0;
+    uint32_t mIndelNum = 0;
+    uint32_t mInsNum = 0;
+    uint32_t mDelNum = 0;
+    uint32_t mInvNum = 0;
+    uint32_t mDupNum = 0;
+    uint32_t mOtherNum = 0;
 
     unordered_map<string, string> mFastaMap;  // map<chromosome, sequence>
+    uint64_t mGenomeSize = 0;  // Reference genome size
+
     BloomFilter* mbf;  // The Counting Bloom filter of reference genome's k-mers informations
 
     ConstructIndex(
         const string& refFileName, 
         const string& vcfFileName, 
         const string& inputMbfFileName, 
+        const string& inputGraphFileName, 
         const string& outputMbfFileName, 
+        const string& outputGraphFileName, 
+        const bool& fastMode, 
         const uint32_t& kmerLen, 
-        const string& prefix, 
-        const uint32_t& ploidy, 
-        const uint32_t& threads, 
-        const bool& debug
+        const string& sampleNameName, 
+        const uint32_t& vcfPloidy, 
+        const bool& debug, 
+        const uint32_t& threads
     );
     ~ConstructIndex();
+
+    /**
+     * @author zezhen du
+     * @date 2023/06/27
+     * @version v1.0.1
+	 * @brief Free memory
+     * 
+     * @return void
+	**/
+    void clear_mbf();
+
+
+    /**
+     * @author zezhen du
+     * @date 2023/07/21
+     * @version v1.0.1
+	 * @brief Free memory
+     * 
+     * @return void
+	**/
+    void clear_mGraphKmerCovFreMap();
 
     /**
      * @author zezhen du
@@ -169,6 +225,31 @@ public:
 
     /**
      * @author zezhen du
+     * @date 2023/09/12
+     * @version v1.0
+	 * @brief Build the index of vcf
+     * 
+     * @param chromosome
+     * @param refStart
+     * @param refLen
+     * @param lineVec     vcf split list
+     * @param qrySeqVec   the sequence Vector of ALT
+     * @param gtIndex     Index where gt resides
+     * 
+     * @return void
+	**/
+    void vcf_construct(
+        const string& chromosome, 
+        const uint32_t& refStart, 
+        const uint32_t& refLen, 
+        const vector<string>& lineVec, 
+        const vector<string>& qrySeqVec, 
+        const int& gtIndex
+    );
+
+
+    /**
+     * @author zezhen du
      * @date 2023/06/27
      * @version v1.0
 	 * @brief building the k-mer index of graph
@@ -180,23 +261,30 @@ public:
 
     /**
      * @author zezhen du
-     * @date 2023/07/14
+     * @date 2023/08/30
      * @version v1.0
-     * @brief Remove duplicate K-mers from graph genome
+     * @brief Merge k-mer information from Genome Graph into nodes.
      * 
      * @return void
     **/
-    void kmer_deduplication();
+    void graph2node();
+
 
     /**
      * @author zezhen du
-     * @date 2023/06/27
-     * @version v1.0.1
-	 * @brief Free memory
+     * @brief Save the graph index to file
      * 
      * @return void
-	**/
-    void clear_memory();
+    **/
+    void save_index();
+
+    /**
+     * @author zezhen du
+     * @brief load the graph index from file
+     * 
+     * @return void
+    **/
+    void load_index() ;
 };
 
 
@@ -274,80 +362,81 @@ namespace construct_index
 
 
     /**
-     * @brief graph index for kmer (threads)
+     * @brief graph index for k-mer (threads)
      * 
-     * @date 2023/07/14
+     * @date 2023/09/01
      * 
-     * @param chromosome            mGraphMap output by construct，map<chr, map<start, nodeSrt> >
+     * @param chromosome            mGraphMap output by construct??map<chr, map<start, nodeSrt> >
      * @param nodeIter              node iterator
      * @param startNodeMap          Chromosome all nodes
+     * @param fastMode              fast mode
      * @param kmerLen               the length of kmer
      * @param bf                    Kmer frequency in the reference genome: Counting Bloom Filter
-     * @param ploidy                Ploidy of vcf file
+     * @param vcfPloidy             ploidy of genotypes in VCF file
      * @param debug                 debug code
      * 
-     * @return {nodeIter, tmpKmerHapBitMap}     kmer: map<kmerHash, vector<int8_t> >
+     * @return {nodeIter, tmpKmerHapBitMap, kmerHashFreMap}     kmer: map<kmerHash, vector<int8_t> >
     **/
-    tuple<map<uint32_t, nodeSrt>::iterator, vector<kmerHashHap> > index_run(
+    tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >, map<uint64_t, uint8_t> > index_run(
         string chromosome, 
         map<uint32_t, nodeSrt>::iterator nodeIter, 
         const map<uint32_t, nodeSrt>& startNodeMap, 
+        const bool& fastMode, 
         const uint32_t& kmerLen, 
         BloomFilter* bf, 
-        const uint32_t& ploidy, 
+        const uint32_t& vcfPloidy, 
         const bool& debug
     );
 
 
     /**
      * @author zezhen du
-     * @date 2023/07/13
+     * @date 2023/08/13
      * @version v1.0.1
      * @brief find the sequence information corresponding to the haplotype upstream and downstream of the node
      * 
-     * @param haplotype       单倍型索引
-     * @param seqLen          kmer的长度
-     * @param nodeIter        startNodeMap中节点所在的迭代器
-     * @param startNodeMap    染色体所有的节点信息startNodeMap，index函数构造
+     * @param haplotype       haplotype index
+     * @param altGt           genotype
+     * @param altLen          ALT sequence length
+     * @param seqLen          k-mer length - 1
+     * @param nodeIter        startNodeMap iterator where the node is located
+     * @param startNodeMap    All chromosome node information startNodeMap, index function construction
      * 
      * @return pair<upSeq, downSeq>
     **/
     pair<string, string> find_node_up_down_seq(
-        const uint16_t & haplotype, 
+        const uint16_t& haplotype, 
+        const uint16_t& altGt, 
+        uint32_t altLen, 
         const uint32_t & seqLen,
         const map<uint32_t, nodeSrt>::iterator & nodeIter, 
         const map<uint32_t, nodeSrt> & startNodeMap
     );
 
 
-    /**
-     * @brief Remove duplicate K-mers from graph genome (threads)
-     * 
-     * @date 2023/07/13
-     * 
-     * @param kmerHashHapVec            Node k-mers information
-     * @param GraphKmerCovFreMap        Total k-mers coverage and frequency information
-     * 
-     * @return tuple<vector<kmerHashHap>&, vector<kmerHashHap> >: tuple<ref(kmerHashHapVec), kmerHashHapVecTmp>
-    **/
-    tuple<vector<kmerHashHap>&, vector<kmerHashHap> > kmer_deduplication_run(
-        vector<kmerHashHap>& kmerHashHapVec, 
-        unordered_map<uint64_t, kmerCovFre>& GraphKmerCovFreMap
+    // sort by k-mer frequency in ascending order
+    bool compare_frequency(
+        const unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator& a, 
+        const unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator& b
     );
 
 
     /**
-     * @author zezhen du
-     * @date 2023/07/13
-     * @version v1.0.1
-     * @brief Convert map to vector
+     * @brief Merge k-mer information from Genome Graph into nodes. (threads)
      * 
-     * @param inputMap            unordered_map<uint64_t, vector<int8_t> >
-     * @param tmpkmerHashHapVec   Converted vector: vector<kmerHashHap>
+     * @date 2023/08/30
      * 
-     * @return void
+     * @param kmerHashVec                     Node k-mers hash
+     * @param GraphKmerHashHapStrMapIterVec   Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
+     * @param GraphKmerHashHapStrMap          Total k-mers coverage and frequency information
+     * 
+     * @return 0
     **/
-    void convert_map2vec(const unordered_map<uint64_t, vector<int8_t> >& inputMap, vector<kmerHashHap>& tmpkmerHashHapVec);
+    int graph2node_run(
+        vector<uint64_t>& kmerHashVec, 
+        vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec, 
+        const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
+    );
 }
 
 #endif

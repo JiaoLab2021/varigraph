@@ -37,16 +37,18 @@ private:
 
     std::mutex mtx;
 
-    unordered_map<uint64_t, kmerCovFre>& GraphKmerCovFreMap_;  // // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFre>
+    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap_;  // // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
 
 public:
+    uint64_t mReadBase = 0;  //Sequencing file size
+
     /**
      * @author zezhen du
      * @date 2023/07/17
      * @version v1.0
 	 * @brief building the kmer index of sequencing read
      * 
-     * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFre>
+     * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
      * @param fastqFileNameVec       the vector of sequencing read
      * @param kmerLen                the length of k-mer
      * @param threads                threads
@@ -54,7 +56,7 @@ public:
      * @return void
 	**/
     FastqKmer(
-        unordered_map<uint64_t, kmerCovFre> & GraphKmerCovFreMap, 
+        unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap, 
         const vector<string>& fastqFileNameVec, 
         const uint32_t& kmerLen, 
         const uint32_t & threads
@@ -73,16 +75,18 @@ public:
 
     /**
      * @author zezhen du
-     * @date 2023/06/27
+     * @date 2023/09/06
      * @version v1.0
 	 * @brief building the kmer index of sequencing read
      * 
      * @param fastqFileName       sequencing read
+     * @param ReadBase            Sequencing file size
      * 
      * @return void
 	**/
     void fastq_file_open(
-        const string & fastqFileName
+        const string & fastqFileName, 
+        uint64_t& ReadBase
     );
 
 
@@ -121,20 +125,20 @@ namespace fastq_kmer
 {
     /**
      * @author zezhen du
-     * @date 2023/07/17
+     * @date 2023/08/01
      * @version v1.0.1
-     * @brief 构件索引多线程函数，减少线程锁
+     * @brief Component index multithreaded functions to reduce thread locks
      * 
-     * @param sequenceVec            sequence vector
-     * @param kmerLen                The length of kmer
-     * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFre>
+     * @param sequenceVec                sequence vector
+     * @param kmerLen                    The length of kmer
+     * @param GraphKmerHashHapStrMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
      * 
      * @return hashVec               vector<uint64_t>
     **/
     vector<uint64_t> fastq_file_open_run(
         vector<string> sequenceVec, 
         uint32_t kmerLen, 
-        const unordered_map<uint64_t, kmerCovFre> & GraphKmerCovFreMap
+        const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
     );
 }
 

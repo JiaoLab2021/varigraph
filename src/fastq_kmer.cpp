@@ -5,7 +5,7 @@
 using namespace std;
 
 
-// kseq.h 打开文件
+// kseq.h 锟斤拷锟侥硷拷
 KSEQ_INIT(gzFile, gzread)
 
 
@@ -15,7 +15,7 @@ KSEQ_INIT(gzFile, gzread)
  * @version v1.0
  * @brief building the kmer index of sequencing read
  * 
- * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFre>
+ * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
  * @param fastqFileNameVec       the vector of sequencing read
  * @param kmerLen                the length of k-mer
  * @param threads                threads
@@ -23,11 +23,11 @@ KSEQ_INIT(gzFile, gzread)
  * @return void
 **/
 FastqKmer::FastqKmer(
-    unordered_map<uint64_t, kmerCovFre> & GraphKmerCovFreMap, 
+    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap, 
     const vector<string>& fastqFileNameVec, 
     const uint32_t& kmerLen, 
     const uint32_t & threads
-) : GraphKmerCovFreMap_(GraphKmerCovFreMap), fastqFileNameVec_(fastqFileNameVec), kmerLen_(kmerLen), threads_(threads) {}
+) : GraphKmerHashHapStrMap_(GraphKmerHashHapStrMap), fastqFileNameVec_(fastqFileNameVec), kmerLen_(kmerLen), threads_(threads) {}
 
 
 /**
@@ -46,7 +46,7 @@ void FastqKmer::build_fastq_index()
     }
 
     for (auto fastqFileName : fastqFileNameVec_) {
-        FastqKmer::fastq_file_open(fastqFileName);
+        FastqKmer::fastq_file_open(fastqFileName, mReadBase);
     }
 
     malloc_trim(0); // 0 is for heap memory
@@ -55,37 +55,39 @@ void FastqKmer::build_fastq_index()
 
 /**
  * @author zezhen du
- * @date 2023/06/27
+ * @date 2023/09/06
  * @version v1.0
  * @brief building the kmer index of sequencing read
  * 
  * @param fastqFileName       sequencing read
+ * @param ReadBase            Sequencing file size
  * 
  * @return void
 **/
 void FastqKmer::fastq_file_open(
-    const string & fastqFileName
+    const string & fastqFileName, 
+    uint64_t& ReadBase
 )
 {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from reads: " << fastqFileName << endl;  // print log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from read: " << fastqFileName << endl;  // print log
 
-    // 保存多线程的结果
+    // Save the result of multithreading
     vector<future<vector<uint64_t> > > hashVecVec;  // vector<kmerVec>
 
-    // open base file
+    // open read file
     gzFile gzfp = gzopen(fastqFileName.c_str(), "rb");
 
-    // 进程池
+    // Thread pool
     ThreadPool pool(threads_);
     const int MAX_THREADS_NUM = threads_*100;  // maximum number of queues
 
-    // 初始化线程池
+    // Initializes the thread pool
     pool.init();
 
-    // 保存序列的临时列表，用于多线程提交任务
+    // Save a temporary list of sequences for multithreaded submission tasks
     vector<string> sequenceVecTmp;
 
-    // 打开文件
+    // open file
     if(!gzfp) {
         cerr << "[" << __func__ << "::" << getTime() << "] " 
                 << "'" << fastqFileName 
@@ -97,16 +99,19 @@ void FastqKmer::fastq_file_open(
         ks = kseq_init(gzfp);
     
         while( kseq_read(ks) >= 0 ) {
-            // ks->name.s 记录的是名字
-            // ks->seq.s 记录的是序列
-            // 转大写
+            // ks->name.s records the name
+            // ks->seq.s records the sequence
+            // Uppercase
             string sequence = ks->seq.s;
             transform(sequence.begin(),sequence.end(),sequence.begin(),::toupper);
 
-            // 存储序列，用于多线程提交
+            // read size
+            ReadBase += ks->seq.l;
+
+            // Store sequences for multithreaded submission
             sequenceVecTmp.push_back(sequence);
 
-            // 如果大于阈值则提交任务
+            // If the value is greater than the threshold, submit the task
             if (sequenceVecTmp.size() >= MAX_THREADS_NUM) {
                 // submit
                 hashVecVec.push_back(
@@ -114,7 +119,7 @@ void FastqKmer::fastq_file_open(
                         fastq_kmer::fastq_file_open_run, 
                         sequenceVecTmp, 
                         kmerLen_, 
-                        ref(GraphKmerCovFreMap_)
+                        ref(GraphKmerHashHapStrMap_)
                     )
                 );
                 // clear
@@ -129,8 +134,9 @@ void FastqKmer::fastq_file_open(
 
                     // Record coverage of variant k-mers
                     for (const auto& hash : hashVecTmp) {  // vector<uint64_t>
-                        if (GraphKmerCovFreMap_[hash].c < UINT8_MAX - 1) {  // Prevent variable out of bounds
-                            ++GraphKmerCovFreMap_[hash].c;
+                        auto& kmerCov = GraphKmerHashHapStrMap_[hash].c;
+                        if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
+                            ++kmerCov;
                         }
                     }
                 }
@@ -151,7 +157,7 @@ void FastqKmer::fastq_file_open(
                 fastq_kmer::fastq_file_open_run, 
                 sequenceVecTmp, 
                 kmerLen_, 
-                ref(GraphKmerCovFreMap_)
+                ref(GraphKmerHashHapStrMap_)
             )
         );
         // free memory
@@ -166,8 +172,9 @@ void FastqKmer::fastq_file_open(
 
             // Record coverage of variant k-mers
             for (const auto& hash : hashVecTmp) {  // vector<uint64_t>
-                if (GraphKmerCovFreMap_[hash].c < UINT8_MAX - 1) {  // Prevent variable out of bounds
-                    ++GraphKmerCovFreMap_[hash].c;
+                auto& kmerCov = GraphKmerHashHapStrMap_[hash].c;
+                if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
+                    ++kmerCov;
                 }
             }
         }
@@ -186,7 +193,7 @@ void FastqKmer::fastq_file_open(
  * @author zezhen du
  * @date 2023/07/18
  * @version v1.0.1
- * @brief Save the kmer statistical results of fastq
+ * @brief Save the k-mer statistical results of fastq
  * 
  * @param outputFileName
  * 
@@ -196,23 +203,35 @@ void FastqKmer::save_index(
     const string & outputFileName
 )
 {
+    // log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Reads index saved to file: " << outputFileName << endl;
+
     std::ofstream outputFile(outputFileName, std::ios::binary);
     if (outputFile) {
-        for (const auto& kvp : GraphKmerCovFreMap_) {
+        // Read base
+        outputFile.write(reinterpret_cast<const char*>(&mReadBase), sizeof(uint64_t));
+
+        for (const auto& kvp : GraphKmerHashHapStrMap_) {
             const uint64_t kmerHash = kvp.first;
-            const kmerCovFre& covFre = kvp.second;
+            const kmerCovFreBitVec& kmerCovFreBitVecStr = kvp.second;
+            const vector<int8_t>& BitVec = kmerCovFreBitVecStr.BitVec;
+            uint64_t BitVecLen = BitVec.size();
 
             // Write kmerHash
             outputFile.write(reinterpret_cast<const char*>(&kmerHash), sizeof(uint64_t));
 
             // Write kmerCov and kmerFre
-            outputFile.write(reinterpret_cast<const char*>(&covFre.c), sizeof(uint8_t));
-            outputFile.write(reinterpret_cast<const char*>(&covFre.f), sizeof(uint8_t));
+            outputFile.write(reinterpret_cast<const char*>(&kmerCovFreBitVecStr.c), sizeof(uint8_t));
+            outputFile.write(reinterpret_cast<const char*>(&kmerCovFreBitVecStr.f), sizeof(uint8_t));
+
+            // Write BitVec
+            outputFile.write(reinterpret_cast<const char*>(&BitVecLen), sizeof(uint64_t));
+            for (const int8_t& Bit : BitVec) {
+                outputFile.write(reinterpret_cast<const char*>(&Bit), sizeof(int8_t));
+            }
         }
 
         outputFile.close();
-        cerr << "[" << __func__ << "::" << getTime() << "] "
-            << "Read index saved to file: " << outputFileName << endl;
     } else {
         cerr << "[" << __func__ << "::" << getTime() << "] "
             << "'" << outputFileName << "': No such file or directory." << endl;
@@ -235,29 +254,48 @@ void FastqKmer::load_index(
     const string & inputFileName
 )
 {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Read index loaded from file: " << inputFileName << endl;  // print log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Reads index loaded from file: " << inputFileName << endl;  // print log
 
     std::ifstream inputFile(inputFileName, std::ios::binary);
     if (inputFile) {
-        // Clear the existing data in GraphKmerCovFreMap_
-        GraphKmerCovFreMap_.clear();
+        // Clear the existing data in GraphKmerHashHapStrMap_
+        GraphKmerHashHapStrMap_.clear();
 
         uint64_t kmerHash;
-        kmerCovFre covFre;
+        kmerCovFreBitVec kmerCovFreBitVecStr;
+        uint8_t c;
+        uint8_t f;
+        uint64_t BitVecLen;
+
+        // Read base
+        inputFile.read(reinterpret_cast<char*>(&mReadBase), sizeof(uint64_t));
 
         // Read kmerHash, kmerCov, and kmerFre from the file
         while (inputFile.read(reinterpret_cast<char*>(&kmerHash), sizeof(uint64_t))) {
-            inputFile.read(reinterpret_cast<char*>(&covFre.c), sizeof(uint8_t));
-            inputFile.read(reinterpret_cast<char*>(&covFre.f), sizeof(uint8_t));
 
-            // Store the values in GraphKmerCovFreMap_
-            GraphKmerCovFreMap_[kmerHash] = covFre;
+            // Read kmerCov and kmerFre
+            inputFile.read(reinterpret_cast<char*>(&c), sizeof(uint8_t));
+            inputFile.read(reinterpret_cast<char*>(&f), sizeof(uint8_t));
+
+            // Read BitVec length
+            inputFile.read(reinterpret_cast<char*>(&BitVecLen), sizeof(uint64_t));
+
+            // Read BitVec
+            vector<int8_t> BitVec(BitVecLen);
+            for (auto& Bit : BitVec) {
+                inputFile.read(reinterpret_cast<char*>(&Bit), sizeof(int8_t));
+            }
+
+            // Store data in the map
+            kmerCovFreBitVecStr.c = c;
+            kmerCovFreBitVecStr.f = f;
+            kmerCovFreBitVecStr.BitVec = BitVec;
+            GraphKmerHashHapStrMap_[kmerHash] = kmerCovFreBitVecStr;
         }
 
         inputFile.close();
-        cerr << "[" << __func__ << "::" << getTime() << "] "
-            << "Read index loaded from file: " << inputFileName << endl;
     } else {
+        // log
         cerr << "[" << __func__ << "::" << getTime() << "] "
             << "'" << inputFileName << "': No such file or directory." << endl;
         exit(1);
@@ -268,30 +306,29 @@ void FastqKmer::load_index(
 
 /**
  * @author zezhen du
- * @date 2023/07/17
+ * @date 2023/08/01
  * @version v1.0.1
- * @brief 构件索引多线程函数，减少线程锁
+ * @brief Component index multithreaded functions to reduce thread locks
  * 
- * @param sequenceVec            sequence vector
- * @param kmerLen                The length of kmer
- * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFre>
+ * @param sequenceVec                sequence vector
+ * @param kmerLen                    The length of kmer
+ * @param GraphKmerHashHapStrMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
  * 
  * @return hashVec               vector<uint64_t>
 **/
 vector<uint64_t> fastq_kmer::fastq_file_open_run(
     vector<string> sequenceVec, 
     uint32_t kmerLen, 
-    const unordered_map<uint64_t, kmerCovFre> & GraphKmerCovFreMap
+    const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
 )
 {
-    // 存储kmer的hash值
+    // A temporary list of hash values
     vector<uint64_t> hashVec;
 
-    // 遍历序列提交任务
-    for (const auto& seq : sequenceVec)
-    {
+    // Iterate through the list of sequences
+    for (const auto& seq : sequenceVec) {
         // save the result
-        vector<uint64_t> hashVecTmp = kmerBit::kmer_sketch_fastq(seq, kmerLen, ref(GraphKmerCovFreMap));
+        vector<uint64_t> hashVecTmp = kmerBit::kmer_sketch_fastq(seq, kmerLen, ref(GraphKmerHashHapStrMap));
 
         // Save to the total vector
         hashVec.insert(hashVec.end(), hashVecTmp.begin(), hashVecTmp.end());

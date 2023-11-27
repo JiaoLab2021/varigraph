@@ -46,121 +46,7 @@ uint64_t kmerBit::hash64(uint64_t key, uint64_t mask)
 
 
 /**
- * Find symmetric (k)-kmer on a DNA sequence
- *
- * @param chromosomeId   reference ID
- * @param str            DNA sequence
- * @param k              k-mer size
- * @param outMap         output kmer hash table - map<kmerHash, vec<chrId<<32 | end | strand>>
- *                       a[i].x = kMer<<8 | kmerSpan
- *                       a[i].y = rid<<32 | lastPos<<1 | strand
- *                       where lastPos is the position of the last base of the i-th minimizer,
- *                       and strand indicates whether the minimizer comes from the top or the bottom strand.
- *                       Callers may want to set "p->n = 0"; otherwise results are appended to p
-**/
-void kmerBit::kmer_sketch(const uint32_t chromosomeId, const string & str, uint32_t k, unordered_map<uint64_t, vector<uint64_t> > & outMap)
-{
-	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
-	int i, l, kmer_span = 0;
-	mm128_t buf[256], min = { UINT64_MAX, UINT64_MAX };
-	tiny_queue_t tq;
-
-	unsigned int len = str.length();
-
-	assert(len > 0 && (k > 0 && k <= 28)); // 56 bits for k-mer; could use long k-mers, but 28 enough in practice
-
-	for (i = l = 0; i < len; ++i)
-	{
-		int c = seq_nt4_table[(uint8_t)str[i]];
-		mm128_t info = { UINT64_MAX, UINT64_MAX };
-		if (c < 4) // not an ambiguous base
-		{
-			int z;
-			kmer_span = l + 1 < k? l + 1 : k;
-			kmer[0] = (kmer[0] << 2 | c) & mask;           // forward k-mer
-			kmer[1] = (kmer[1] >> 2) | (3ULL^c) << shift1; // reverse k-mer
-			if (kmer[0] == kmer[1]) continue; // skip "symmetric k-mers" as we don't know it strand
-			z = kmer[0] < kmer[1]? 0 : 1; // strand
-			++l;
-			if (l >= k && kmer_span < 256)
-			{
-				info.x = hash64(kmer[z], mask) << 8 | kmer_span;
-				if (z == 0) // 正向
-				{
-					info.y = (uint64_t)chromosomeId<<32 | (uint32_t)(i+1)<<1 | z;
-				}
-				else // 反向
-				{
-					info.y = (uint64_t)chromosomeId<<32 | (uint32_t)(len-i-1+k)<<1 | z;
-				}
-				outMap[info.x].push_back(info.y);
-			}
-		} 
-		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
-	}
-}
-
-
-/**
- * Find symmetric (k)-kmer on a DNA sequence
- *
- * @param chromosomeId   reference ID
- * @param str            DNA sequence
- * @param k              k-mer size
- * @param outMap         output kmer hash table - map<kmerHash, map<chrId, kmerNum>>
- *                       a[i].x = kMer<<8 | kmerSpan
- *                       p->a[i].y = chromosomeId<<32 | lastPos<<1 | strand
- * 						 outMap map<kmerScore, map<readId, kmerNum>>
- *                       where lastPos is the position of the last base of the i-th minimizer,
- *                       and strand indicates whether the minimizer comes from the top or the bottom strand.
- *                       Callers may want to set "p->n = 0"; otherwise results are appended to p
-**/
-void kmerBit::kmer_sketch(const uint32_t chromosomeId, const string & str, uint32_t k, unordered_map<uint64_t, unordered_map<uint64_t, uint32_t> > & outMap)
-{
-	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
-	int i, l, kmer_span = 0;
-	mm128_t buf[256], min = { UINT64_MAX, UINT64_MAX };
-	tiny_queue_t tq;
-
-	unsigned int len = str.length();
-
-	assert(len > 0 && (k > 0 && k <= 28)); // 56 bits for k-mer; could use long k-mers, but 28 enough in practice
-
-	for (i = l = 0; i < len; ++i)
-	{
-		int c = seq_nt4_table[(uint8_t)str[i]];
-		mm128_t info = { UINT64_MAX, UINT64_MAX };
-		if (c < 4) // not an ambiguous base
-		{
-			int z;
-			kmer_span = l + 1 < k? l + 1 : k;
-			kmer[0] = (kmer[0] << 2 | c) & mask;           // forward k-mer
-			kmer[1] = (kmer[1] >> 2) | (3ULL^c) << shift1; // reverse k-mer
-			if (kmer[0] == kmer[1]) continue; // skip "symmetric k-mers" as we don't know it strand
-			z = kmer[0] < kmer[1]? 0 : 1; // strand
-			++l;
-			if (l >= k && kmer_span < 256)
-			{
-				info.x = hash64(kmer[z], mask) << 8 | kmer_span;
-				// 不要终止位置和kmer方向信息，所以注释掉
-				if (z == 0) // 正向
-				{
-					info.y = (uint64_t)chromosomeId<<32 | (uint32_t)(i+1)<<1 | z;
-				}
-				else // 反向
-				{
-					info.y = (uint64_t)chromosomeId<<32 | (uint32_t)(len-i-1+k)<<1 | z;
-				}
-				outMap[info.x][chromosomeId]++;
-			}
-		} 
-		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
-	}
-}
-
-
-/**
- * Find symmetric (k)-kmer on a DNA sequence (reference genome)
+ * Find symmetric (k)-kmer on a DNA sequence (Counting Bloom Filter)
  *
  * @param str            DNA sequence
  * @param k              k-mer size
@@ -168,7 +54,7 @@ void kmerBit::kmer_sketch(const uint32_t chromosomeId, const string & str, uint3
  * 
  * @return 0
 **/
-int kmerBit::kmer_sketch_fasta(const string& str, const uint32_t& k, BloomFilter* bf)
+int kmerBit::kmer_sketch_bf(const string& str, const uint32_t& k, BloomFilter* bf)
 {
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
@@ -206,16 +92,16 @@ int kmerBit::kmer_sketch_fasta(const string& str, const uint32_t& k, BloomFilter
 
 
 /**
- * Find symmetric (k)-kmer on a DNA sequence (graph)
- * 跳过在参考基因组中频率大于1的kmer
+ * Find symmetric (k)-kmer on a DNA sequence (graph construct)
+ * Skip k-mer with a frequency greater than 1 in the reference genome
  *
- * @param str            DNA sequence
- * @param k              k-mer size
- * @param outMap         output kmer hash table - map<kmerHash, coverage>
- *                       a[i].x = kMer<<8 | kmerSpan
- * @param bf             参考基因组中kmer的频率, Counting Bloom Filter
+ * @param str                       DNA sequence
+ * @param k                         k-mer size
+ * @param freKmerHashSetMap         output kmer hash table - map<frequence, unordered_set<kmerHash> >
+ *                                  a[i].x = kMer<<8 | kmerSpan
+ * @param bf                        Frequency of kmers in the reference genome, Counting Bloom Filter
 **/
-void kmerBit::kmer_sketch(string str, uint32_t k, unordered_map<uint64_t, uint8_t> & outMap, BloomFilter* bf)
+void kmerBit::kmer_sketch_construct(string str, uint32_t k, map<uint8_t, unordered_set<uint64_t> >& freKmerHashSetMap, BloomFilter* bf)
 {
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
@@ -239,16 +125,12 @@ void kmerBit::kmer_sketch(string str, uint32_t k, unordered_map<uint64_t, uint8_
 			if (kmer[0] == kmer[1]) continue; // skip "symmetric k-mers" as we don't know it strand
 			z = kmer[0] < kmer[1]? 0 : 1; // strand
 			++l;
-			if (l >= k && kmer_span < 256)
-			{
+			if (l >= k && kmer_span < 256) {
 				info.x = hash64(kmer[z], mask) << 8 | kmer_span;
 
-				if (bf->count(info.x) > 1) continue; // 在参考基因组中频率大于1的kmer跳过
-
-				if (outMap[info.x] < UINT8_MAX)  // 防止变量越界
-				{
-					outMap[info.x]++;
-				}
+				// k-mers with their frequence in bf
+				auto& emplacedValue = freKmerHashSetMap.emplace(bf->count(info.x), unordered_set<uint64_t>()).first->second;
+				emplacedValue.insert(info.x);
 			}
 		}
 		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
@@ -259,19 +141,18 @@ void kmerBit::kmer_sketch(string str, uint32_t k, unordered_map<uint64_t, uint8_
 /**
  * Find symmetric (k)-kmer on a DNA sequence (read)
  *
- * @param str                   DNA sequence
- * @param k                     k-mer size
- * @param GraphKmerCovFreMap    Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFre>
+ * @param str                       DNA sequence
+ * @param k                         k-mer size
+ * @param GraphKmerHashHapStrMap    Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
  * 
- * @return hashVec              output kmer hash table - vector<kmerHash>
- *                              a[i].x = kMer<<8 | kmerSpan
+ * @return hashVec                  output kmer hash table - vector<kmerHash>
+ *                                  a[i].x = kMer<<8 | kmerSpan
 **/
 vector<uint64_t> kmerBit::kmer_sketch_fastq(
 	const string& str, 
 	const uint32_t& k, 
-	const unordered_map<uint64_t, kmerCovFre> & GraphKmerCovFreMap
-)
-{
+	const unordered_map<uint64_t, kmerCovFreBitVec> & GraphKmerHashHapStrMap
+) {
 	vector<uint64_t> hashVec;  // save k-mers
 
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
@@ -297,7 +178,7 @@ vector<uint64_t> kmerBit::kmer_sketch_fastq(
 			if (l >= k && kmer_span < 256) {
 				info.x = hash64(kmer[z], mask) << 8 | kmer_span;
 
-				if (GraphKmerCovFreMap.find(info.x) != GraphKmerCovFreMap.end()) {  // If there is a corresponding k-mer in the figure, add it
+				if (GraphKmerHashHapStrMap.find(info.x) != GraphKmerHashHapStrMap.end()) {  // If there is a corresponding k-mer in the graph, add it
 					hashVec.push_back(info.x);
 				}
 			}
@@ -310,16 +191,67 @@ vector<uint64_t> kmerBit::kmer_sketch_fastq(
 
 
 /**
+ * Find symmetric (k)-kmer on a DNA sequence (genotype)
+ *
+ * @param str                       DNA sequence
+ * @param k                         k-mer size
+ * 
+ * @return hashSet                  output kmer hash table - set<kmerHash>
+ *                                  a[i].x = kMer<<8 | kmerSpan
+**/
+unordered_set<uint64_t> kmerBit::kmer_sketch_genotype(
+	const string& str, 
+	const uint32_t& k
+) {
+	unordered_set<uint64_t> hashSet;
+	
+	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
+	int i, l, kmer_span = 0;
+	mm128_t buf[256], min = { UINT64_MAX, UINT64_MAX };
+	tiny_queue_t tq;
+
+	unsigned int len = str.length();
+
+	assert(len > 0 && (k > 0 && k <= 28)); // 56 bits for k-mer; could use long k-mers, but 28 enough in practice
+
+	for (i = l = 0; i < len; ++i)
+	{
+		int c = seq_nt4_table[(uint8_t)str[i]];
+		mm128_t info = { UINT64_MAX, UINT64_MAX };
+		if (c < 4) // not an ambiguous base
+		{
+			int z;
+			kmer_span = l + 1 < k? l + 1 : k;
+			kmer[0] = (kmer[0] << 2 | c) & mask;           // forward k-mer
+			kmer[1] = (kmer[1] >> 2) | (3ULL^c) << shift1; // reverse k-mer
+			if (kmer[0] == kmer[1]) continue; // skip "symmetric k-mers" as we don't know it strand
+			z = kmer[0] < kmer[1]? 0 : 1; // strand
+			++l;
+			if (l >= k && kmer_span < 256) {
+				info.x = hash64(kmer[z], mask) << 8 | kmer_span;
+
+				// Records
+				hashSet.insert(info.x);
+			}
+		}
+		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
+	}
+
+	return hashSet;
+}
+
+
+/**
  * @author               zezhen du
  * @date                 2022/12/13
  * @version              v1.0
  * @brief                uncode hash function
  * @param hashNum        hash number of kmer by kmer_sketch
 
- * @return            make_tuple(chrId, kmerEnd, kmerStrand)
- *                    chrId
- *                    kmerEnd
- * 					 kmerStrand
+ * @return               make_tuple(chrId, kmerEnd, kmerStrand)
+ *                       chrId
+ *                       kmerEnd
+ * 				   	     kmerStrand
 **/
 tuple<uint64_t, uint32_t, int> kmerBit::hash_uncode(const uint64_t & hashNum)
 {

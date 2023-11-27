@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <random>
 #include <unordered_set>
+#include <unordered_map>
 #include <queue>
 #include <utility>
 
@@ -15,7 +16,7 @@ using namespace std;
 
 struct ComparePair {
     bool operator()(const std::pair<double, uint16_t>& a, const std::pair<double, uint16_t>& b) {
-        return a.first > b.first; // descending order
+        return a.first > b.first;  // descending order
     }
 };
 
@@ -47,7 +48,7 @@ public:
 
     void generate_sparse_frequency_vector();
 
-    void get_top_indices(int numIndices);
+    unordered_map<uint16_t, double> get_top_indices(int numIndices);
 };
 
 #endif

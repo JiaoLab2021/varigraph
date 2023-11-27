@@ -7,19 +7,28 @@ Varigraph::Varigraph(
     const string& refFileName, 
     const vector<string>& fastqFileNameVec, 
     const string& vcfFileName, 
-    const string& inputFastqKmerFileName, 
     const string& inputMbfFileName, 
-    const string& outputFastqKmerFileName, 
+    const string& inputGraphFileName, 
+    const string& inputFastqKmerFileName, 
     const string& outputMbfFileName, 
+    const string& outputGraphFileName, 
+    const string& outputFastqKmerFileName, 
     const string& outputFileName, 
+    const bool& fastMode, 
     const uint32_t& kmerLen, 
-    const string& prefix, 
-    const uint32_t& ploidy, 
-    const uint32_t& threads, 
-    const bool& debug
-) : refFileName_(refFileName), fastqFileNameVec_(fastqFileNameVec), vcfFileName_(vcfFileName), inputFastqKmerFileName_(inputFastqKmerFileName), inputMbfFileName_(inputMbfFileName), 
-    outputFastqKmerFileName_(outputFastqKmerFileName), outputMbfFileName_(outputMbfFileName),  outputFileName_(outputFileName), 
-    kmerLen_(kmerLen), prefix_(prefix), ploidy_(ploidy), threads_(threads), debug_(debug) {}
+    const string& sampleName, 
+    const string& genomeType, 
+    const uint32_t& refPloidy, 
+    const uint32_t& vcfPloidy, 
+    const uint32_t& haploidNum, 
+    const bool& debug, 
+    const uint32_t& threads
+) : refFileName_(refFileName), fastqFileNameVec_(fastqFileNameVec), vcfFileName_(vcfFileName), inputMbfFileName_(inputMbfFileName), inputGraphFileName_(inputGraphFileName), inputFastqKmerFileName_(inputFastqKmerFileName), 
+    outputMbfFileName_(outputMbfFileName), outputGraphFileName_(outputGraphFileName), outputFastqKmerFileName_(outputFastqKmerFileName), outputFileName_(outputFileName), 
+    fastMode_(fastMode), kmerLen_(kmerLen), sampleName_(sampleName), genomeType_(genomeType), refPloidy_(refPloidy), vcfPloidy_(vcfPloidy), haploidNum_(haploidNum), debug_(debug), threads_(threads) {
+        // cerr
+        std::cerr.imbue(std::locale(""));  // Thousandth output
+    }
 
 
 Varigraph::~Varigraph()
@@ -44,36 +53,50 @@ void Varigraph::ref_idx_construct()
         refFileName_, 
         vcfFileName_, 
         inputMbfFileName_, 
+        inputGraphFileName_, 
         outputMbfFileName_, 
+        outputGraphFileName_, 
+        fastMode_, 
         kmerLen_, 
-        prefix_, 
-        ploidy_, 
-        threads_, 
-        debug_
+        sampleName_, 
+        vcfPloidy_, 
+        debug_, 
+        threads_
     );
 
     // Building the k-mers index of reference genome
     ConstructIndexClassPtr_->build_fasta_index();
 
-    // Counting Bloom Filter
-    ConstructIndexClassPtr_->make_mbf();
+    if (inputGraphFileName_.empty()) {
+        // Counting Bloom Filter
+        ConstructIndexClassPtr_->make_mbf();
 
-    // Graph construction
-    ConstructIndexClassPtr_->construct();
+        // Genome Graph construction
+        ConstructIndexClassPtr_->construct();
 
-    // building the k-mer index of graph
-    ConstructIndexClassPtr_->index();
+        // building the k-mer index of graph
+        ConstructIndexClassPtr_->index();
+
+        // save Genome Graph to file
+        if (!outputGraphFileName_.empty()) {
+            ConstructIndexClassPtr_->save_index();
+        }
+
+        // Free memory (Counting Bloom Filter)
+        ConstructIndexClassPtr_->clear_mbf();
+        
+    } else {
+        // VCF index
+        ConstructIndexClassPtr_->construct();
+
+        // load Genome Graph from file
+        ConstructIndexClassPtr_->load_index();
+    }
+    
+    // log
     cerr << endl;
-    cerr << "           - " << "Number of k-mers in the graph: " << ConstructIndexClassPtr_->mGraphKmerCovFreMap.size() << endl;
-    cerr << "           - " << "Number of haplotypes in the graph: " << ConstructIndexClassPtr_->mHapMap.size() << endl << endl << endl;
-
-    // Free memory (Counting Bloom Filter)
-    ConstructIndexClassPtr_->clear_memory();
-
-    // K-mer deduplication in the graph genome
-    ConstructIndexClassPtr_->kmer_deduplication();
-    cerr << endl;
-    cerr << "           - " << "Number of unique k-mers in the graph: " << ConstructIndexClassPtr_->mGraphKmerCovFreMap.size() << endl << endl << endl;
+    cerr << "           - " << "Number of k-mers in the Genome Graph: " << ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.size() << endl;
+    cerr << "           - " << "Number of haplotypes in the Genome Graph: " << ConstructIndexClassPtr_->mHapMap.size() << endl << endl << endl;
 }
 
 
@@ -89,7 +112,7 @@ void Varigraph::kmer_read()
 {
     // Computing the frequency of variants and noisy k-mers
     FastqKmer FastqKmerClass(
-        ConstructIndexClassPtr_->mGraphKmerCovFreMap, 
+        ConstructIndexClassPtr_->mGraphKmerHashHapStrMap, 
         fastqFileNameVec_, 
         kmerLen_, 
         threads_
@@ -107,20 +130,37 @@ void Varigraph::kmer_read()
         FastqKmerClass.load_index(inputFastqKmerFileName_);
     }
 
+    // sequencing data depth
+    ReadDepth_ = FastqKmerClass.mReadBase / (float)ConstructIndexClassPtr_->mGenomeSize;
+
     // Calculate Average Coverage (variants k-mers)
-    uint64_t allKmerCoverage = std::accumulate(
-        ConstructIndexClassPtr_->mGraphKmerCovFreMap.begin(), 
-        ConstructIndexClassPtr_->mGraphKmerCovFreMap.end(), 
+    uint64_t allKmerNum = 0;
+    uint64_t allKmerCov = std::accumulate(
+        ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.begin(), 
+        ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.end(), 
         0ull,
-        [](int sum, const auto& pair)
-        {
-            return sum + pair.second.c;
+        [&allKmerNum](int sum, const auto& pair) mutable {
+            // if (pair.second.c > 0 && pair.second.f == 1) {
+            if (pair.second.c > 1 && pair.second.f == 1) {  // 2023/09/27
+                ++allKmerNum;
+                return sum + pair.second.c;
+            } else {
+                return sum;
+            }
         }
     );
-    float aveKmerCoverage = (ConstructIndexClassPtr_->mGraphKmerCovFreMap.size() > 0) ? static_cast<float>(allKmerCoverage) / ConstructIndexClassPtr_->mGraphKmerCovFreMap.size() : 0.0f;
-    
+    float aveKmerCoverage = (allKmerNum > 0) ? static_cast<float>(allKmerCov) / allKmerNum : 0.0f;
+
     cerr << endl;
-    cerr << "           - " << "Average coverage of Variants k-mers: " << aveKmerCoverage << endl << endl << endl;  // print log
+    cerr << fixed << setprecision(2);
+    cerr << "           - " << "Size of sequencing data: " << FastqKmerClass.mReadBase / 1e9 << " Gb" << endl;
+    cerr << "           - " << "Sequencing data depth: " << ReadDepth_ << endl;
+    cerr << "           - " << "Average coverage of k-mers: " << aveKmerCoverage << endl << endl << endl;
+    cerr << defaultfloat << setprecision(6);
+
+    // Merge k-mer information from Genome Graph into nodes.
+    ConstructIndexClassPtr_->graph2node();
+    // ConstructIndexClassPtr_->clear_mGraphKmerCovFreMap();
 }
 
 
@@ -137,12 +177,16 @@ void Varigraph::genotype()
 {
     // genotype
     GENOTYPE::genotype(
-        ConstructIndexClassPtr_->mGraphKmerCovFreMap, 
         ConstructIndexClassPtr_->mGraphMap, 
         ConstructIndexClassPtr_->mHapMap, 
         ConstructIndexClassPtr_->mVcfHead, 
         ConstructIndexClassPtr_->mVcfInfoMap, 
+        genomeType_, 
+        refPloidy_, 
+        ReadDepth_, 
         outputFileName_, 
+        kmerLen_, 
+        haploidNum_, 
         threads_, 
         debug_
     );

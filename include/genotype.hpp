@@ -9,10 +9,12 @@
 #include <malloc.h>
 #include <iomanip>
 #include <bitset>
+#include <cmath>
 
 #include "save.hpp"
 #include "get_time.hpp"
 #include "ThreadPool.hpp"
+#include "kmer.hpp"
 #include "construct_index.hpp"
 #include "haplotype_select.hpp"
 
@@ -35,170 +37,229 @@ using namespace std;
 // global variable
 extern bool debugGenotype;
 
+
+struct HS {
+    uint8_t h = 0;  // hidden state
+    uint8_t c = 0;  // coverage: read
+    uint8_t f = 0;  // frequency: genome or graph
+};
+
+struct HHS {
+    vector<uint16_t> hapVec;  // all haplotype combinations
+    vector<HS> HiddenStatesVec;  // All k-mer states
+    long double observableScore = 0.0L;  // observable_states function calculates the score
+};
+
+
 namespace GENOTYPE
 {
     /**
      * @author zezhen du
-     * @date 2023/06/27
-     * @version v1.0.1
-     * @brief calculate Node k-mers Coverage
-     * 
-     * @param GraphKmerCovFreMap  map<kmerHash, kmerCovFre>
-     * @param kmerHashHapVec      vector<kmerHashHap>   
-     * @param nodeAveKmerCoverage the average k-mers coverage of node
-     * @param kmerCoverageVec     the k-mers vector of node
-     * 
-     * @return void
-    **/
-    void cal_node_cov(
-        const std::unordered_map<uint64_t, kmerCovFre> &GraphKmerCovFreMap, 
-        const vector<kmerHashHap> & kmerHashHapVec, 
-        float & nodeAveKmerCoverage,
-        vector<uint8_t> & kmerCoverageVec
-    );
-
-
-    /**
-     * @author zezhen du
-     * @date 2023/07/17
-     * @version v1.0.1
-     * @brief forward/backward run
-     * 
-     * @param GraphKmerCovFreMap  map<kmerHash, kmerCovFre>
-     * @param startNodeIter       node iterator
-     * @param hapMap              haplotype information
-     * @param threadStart         iterator start position
-     * @param threadEnd           iterator end position
-     * 
-     * @return 0
-    **/
-    int for_bac_post_run(
-        const unordered_map<uint64_t, kmerCovFre> & GraphKmerCovFreMap, 
-        map<string, map<uint32_t, nodeSrt> >::iterator startNodeIter, 
-        const map<uint16_t, string> & hapMap, 
-        uint32_t threadStart, 
-        uint32_t threadEnd
-    );
-
-
-    /**
-     * @author zezhen du
-     * @date 2023/07/20
-     * @version v1.0
-     * @brief haplotype selection
-     * 
-     * @param GraphKmerCovFreMap    Coverage of all k-mers in the graph
-     * @param chromosome            chromosome
-     * @param newStartNodeIterL     thread left iterator
-     * @param newStartNodeIterR     thread right iterator
-     * @param hapMap                haplotype information
-     * @param topHapVec             Haplotype index for final screening in this block
-     * 
-     * @return void
-    **/
-    void haplotype_selection(
-        const std::unordered_map<uint64_t, kmerCovFre> &GraphKmerCovFreMap, 
-        const string& chromosome, 
-        const map<uint32_t, nodeSrt>::iterator& newStartNodeIterL, 
-        const map<uint32_t, nodeSrt>::iterator& newStartNodeIterR, 
-        const map<uint16_t, string> & hapMap, 
-        vector<uint16_t>& topHapVec
-    );
-
-
-    /**
-     * @author zezhen du
-     * @date 2023/7/17
+     * @date 2023/09/22
      * @version v1.0.1
      * @brief genotype
      * 
-     * @param GraphKmerCovFreMap     map<kmerHash, kmerCovFre>
      * @param GraphMap               output of construct_index: map<string, map<uint32_t, nodeSrt>>
      * @param hapMap                 Contains all haplotypes
      * @param vcfHead                the VCF file comment lines
      * @param vcfInfoMap             VCF information
+     * @param genomeType             specify the genotype of the reference genome (homozygous/heterozygous)
+     * @param refPloidy              genome ploidy
+     * @param ReadDepth              sequencing data depth
      * @param outputFileName         output filename
+     * @param kmerLen
+     * @param haploidNum             the haploid number for genotyping
      * @param threads
      * @param debug
      * 
      * @return 0
     **/
     int genotype(
-        const unordered_map<uint64_t, kmerCovFre> & GraphKmerCovFreMap, 
         map<string, map<uint32_t, nodeSrt> > & GraphMap, 
         const map<uint16_t, string> & hapMap, 
         const string& vcfHead, 
-        map<string, map<uint32_t, string> > & vcfInfoMap, 
+        map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
+        const string& genomeType, 
+        const uint32_t& refPloidy, 
+        const float& ReadDepth, 
         const string & outputFileName, 
-        const uint32_t & threads, 
+        uint32_t kmerLen, 
+        uint32_t haploidNum, 
+        uint32_t threads, 
         const bool & debug
     );
 
+
     /**
      * @author zezhen du
-     * @date 2023/07/20
-     * @version v1.0
-	 * @brief Hidden states
+     * @date 2023/09/22
+     * @version v1.0.1
+     * @brief forward/backward run
      * 
-     * @param node         node information, output by construct
-     * @param topHapVec    The haplotype finally screened out by the block
+     * @param startNodeIter       node iterator
+     * @param hapMap              haplotype information
+     * @param genomeType          specify the genotype of the reference genome (homozygous/heterozygous)
+     * @param refPloidy           genome ploidy
+     * @param ReadDepth           sequencing data depth
+     * @param threadStart         iterator start position
+     * @param threadEnd           iterator end position
+     * @param kmerLen
+     * @param haploidNum          the haploid number for genotyping
      * 
-     * @return hiddenStatesMap   map<uint8_t, map<uint8_t, vector<uint8_t> > >
-	**/
-    map<uint16_t, map<uint16_t, vector<uint8_t> > > hidden_states(
-        const nodeSrt & node, 
-        const vector<uint16_t>& topHapVec
+     * @return 0
+    **/
+    int for_bac_post_run(
+        map<string, map<uint32_t, nodeSrt> >::iterator startNodeIter, 
+        const map<uint16_t, string> & hapMap, 
+        const string& genomeType, 
+        const uint32_t& refPloidy, 
+        const float& ReadDepth,
+        uint32_t threadStart, 
+        uint32_t threadEnd, 
+        uint32_t kmerLen, 
+        uint32_t haploidNum
     );
 
 
     /**
      * @author zezhen du
-     * @date 2022/12/25
+     * @date 2023/09/22
      * @version v1.0
-	 * @brief Transition probabilities
+     * @brief haplotype selection
      * 
-     * @param nodeDistence   node之间的距离
-     * @param hapMap         单倍型信息，output by construct
+     * @param chromosome            chromosome
+     * @param newStartNodeIterL     thread left iterator
+     * @param newStartNodeIterR     thread right iterator
+     * @param hapMap                haplotype information
+     * @param haploidNum            the haploid number for genotyping
+     * @param topHapVec             Haplotype index for final screening in this block
+     * @param aveKmerCoverage       the average k-mers coverage
+     * 
+     * @return void
+    **/
+    void haplotype_selection(
+        const string& chromosome, 
+        const map<uint32_t, nodeSrt>::iterator& newStartNodeIterL, 
+        const map<uint32_t, nodeSrt>::iterator& newStartNodeIterR, 
+        const map<uint16_t, string> & hapMap, 
+        uint32_t haploidNum, 
+        vector<uint16_t>& topHapVec, 
+        float & aveKmerCoverage
+    );
+
+
+    /**
+     * @author zezhen du
+     * @date 2023/09/06
+     * @version v1.0
+     * @brief Hidden states (2)
+     * 
+     * @param genomeType          specify the genotype of the reference genome (homozygous/heterozygous)
+     * @param refPloidy           genome ploidy
+     * @param chromosome          chromosome
+     * @param nodeStart           Node start position
+     * @param startNodeIter       node iterator, map<string, map<uint32_t, nodeSrt> >
+     * @param node                node information, output by construct
+     * @param topHapVec           The haplotype finally screened out by the block
+     * @param NodeAveKmerCoverage average coverage of k-mers in nodes
+     * @param lower               95% confidence interval for average coverage
+     * @param upper               95% confidence interval for average coverage
+     * @param kmerLen
+     * @param filter              Whether to filter GraphKmerHashHapStrMapIterVec
+     * 
+     * @return HHSStrVec          vector<HHS>
+    **/
+    vector<HHS> hidden_states(
+        const string& genomeType, 
+        const uint32_t& refPloidy, 
+        const string& chromosome, 
+        const uint32_t& nodeStart, 
+        map<string, map<uint32_t, nodeSrt> >::iterator startNodeIter, 
+        nodeSrt& node, 
+        const vector<uint16_t>& topHapVec, 
+        float& NodeAveKmerCoverage, 
+        const double& lower, 
+        const double& upper, 
+        const uint32_t& kmerLen, 
+        bool filter
+    );
+
+
+    /**
+     * @author zezhen du
+     * @brief Gets the combination of all haplotypes
+     * 
+     * @param hapVec     Vector of haplotypes     
+     * @param genomeType specify the genotype of the reference genome (homozygous/heterozygous) [homozygous]
+     * @param refPloidy  genome ploidy (2-8) [2]
+     * 
+     * @return ComHapVec
+    **/
+    vector<vector<uint16_t> > increment_vector(const vector<uint16_t>& hapVec, const string& genomeType, const uint32_t& refPloidy);
+
+
+    /**
+     * @author zezhen du
+     * @brief Calculate the upper and lower limits of the Poisson distribution
+     * 
+     * @param lambda     
+     * @param lower      lower limit
+     * @param upper      upper limit
+     * 
+     * @return void
+    **/
+    void calculate_poisson_interval(const double& lambda, double& lower, double& upper);
+
+
+    /**
+     * @author zezhen du
+     * @date 2023/07/29
+     * @version v1.0
+     * @brief Transition probabilities
+     * 
+     * @param nodeDistence   distance between nodes
+     * @param hapMap         Haplotype information, output by construct
      * 
      * @return pair<long double, long double>   recombProb, noRecombProb
-	**/
+    **/
     pair<long double, long double> transition_probabilities(const uint32_t & nodeDistence, const map<uint16_t, string> & hapMap);
 
 
     /**
      * @author zezhen du
-     * @date 2022/12/25
+     * @date 2023/09/06
      * @version v1.0
-	 * @brief Observable states
+     * @brief Observable states
      * 
-     * @param aveKmerCoverage      平均的kmer覆盖度
-     * @param hiddenStatesMap      node的所有隐藏状态，output by hidden_states
-     * @param kmerCoverageVec      node的所有kmer覆盖度
-     * @param node                 node所有信息
+     * @param aveKmerCoverage      Average kmer coverage
+     * @param HHSStrVec            All hidden states of node, output by hidden_states
+     * @param node                 All information about node
+     * @param refPloidy            genome ploidy
      * 
-     * @return observableStatesMap   map<uint16_t, map<uint16_t, long double> >, map<genotype1, map<genotype2, result>>
-	**/
-    map<uint16_t, map<uint16_t, long double> > observable_states(
+     * @return void
+    **/
+    void observable_states(
         const float & aveKmerCoverage, 
-        const map<uint16_t, map<uint16_t, vector<uint8_t> > > & hiddenStatesMap, 
-        const vector<uint8_t> & kmerCoverageVec, 
-        nodeSrt & node
+        vector<HHS>& HHSStrVec, 
+        nodeSrt & node, 
+        const uint32_t& refPloidy
     );
+    
 
     /**
      * @author zezhen du
      * @date 2022/12/23
      * @version v1.0
-	 * @brief poisson
+     * @brief poisson
      * 
-     * @param mean         kmer的覆盖度
-     * @param value        kmer在隐藏状态矩阵中的数值
+     * @param mean         average k-mer coverage of nodes
+     * @param value        k-mer coverage
      * 
      * @return poisson
-	**/
+    **/
     long double poisson(
         long double mean, 
-        unsigned int value
+        uint8_t value
     );
 
     /**
@@ -207,7 +268,7 @@ namespace GENOTYPE
      * @version v1.0
 	 * @brief get_error_param
      * 
-     * @param aveKmerCoverage         kmer的平均覆盖度
+     * @param aveKmerCoverage         Average coverage of k-mer
      * 
      * @return Correct rate
 	**/
@@ -217,99 +278,162 @@ namespace GENOTYPE
      * @author zezhen du
      * @date 2022/12/23
      * @version v1.0
-	 * @brief geometric，隐藏状态为0时的返回状态
+	 * @brief geometric, the return state when the hidden state is 0
      * 
      * @param p         Correct rate, output by get_error_param
-     * @param value     隐藏状态中的数值
+     * @param value     coverage
      * 
      * @return geometric
 	**/
-    long double geometric(
-        long double p, 
-        unsigned int value
+    long double geometric(long double p, uint8_t value);
+
+    // Prior probability distribution function (normal distribution)
+    long double prior(long double p);
+
+    // Likelihood function
+    long double likelihood(long double p, uint8_t value);
+
+
+    /**
+     * @author zezhen du
+     * @date 2023/09/03
+     * @brief find_most_likely_depth
+     * 
+     * @param h                   hidden state
+     * @param c                   k-mer coverage
+     * @param f                   k-mer frequency
+     * @param aveKmerCoverage     Average depth
+     * @param lower               95% confidence interval for average coverage
+     * @param upper               95% confidence interval for average coverage
+     * @param refPloidy           genome ploidy
+     * 
+     * @return void
+    **/
+    void find_most_likely_depth(
+        const uint8_t& h, 
+        uint8_t& c, 
+        const uint8_t& f, 
+        const float& aveKmerCoverage, 
+        const double& lower, 
+        const double& upper,  
+        const uint32_t& refPloidy
     );
 
 
     /**
      * @author zezhen du
-     * @date 2022/12/23
+     * @date 2023/09/22
      * @version v1.0
-	 * @brief 向前算法
+     * @brief forward algorithm
      * 
      * @param preHMMScoreVec        Alpha of previous state
-     * @param recombProb            重组的概率
-     * @param noRecombProb          非重组的概率
-     * @param observableStatesMap   观察矩阵
+     * @param recombProb            probability of recombination
+     * @param noRecombProb          Probability of non-recombination
+     * @param HHSStrVec             observation matrix
      * @param HMMScoreVec           Alpha of this state
      * 
      * @return void
-	**/
+    **/
     void forward(
-        const vector<HMMScore> & preHMMScoreVec, 
-        const long double & recombProb, 
-        const long double & noRecombProb, 
-        const map<uint16_t, map<uint16_t, long double> > & observableStatesMap, 
+        const vector<HMMScore>& preHMMScoreVec, 
+        const long double& recombProb, 
+        const long double& noRecombProb, 
+        const vector<HHS>& HHSStrVec, 
         vector<HMMScore>& HMMScoreVec
     );
 
 
     /**
      * @author zezhen du
-     * @date 2022/12/23
+     * @date 2023/09/22
      * @version v1.0
-	 * @brief 向后算法
+     * @brief backward algorithm
      * 
      * @param preHMMScoreVec        Beta of previous state
-     * @param recombProb            重组的概率
-     * @param noRecombProb          非重组的概率
-     * @param observableStatesMap   观察矩阵
+     * @param recombProb            probability of recombination
+     * @param noRecombProb          Probability of non-recombination
+     * @param HHSStrVec             observation matrix
      * @param HMMScoreVec           Beta of this state
      * 
      * @return void
-	**/
+    **/
     void backward(
-        const vector<HMMScore> & preHMMScoreVec, 
-        const long double & recombProb, 
-        const long double & noRecombProb, 
-        const map<uint16_t, map<uint16_t, long double> > & observableStatesMap, 
+        const vector<HMMScore>& preHMMScoreVec, 
+        const long double& recombProb, 
+        const long double& noRecombProb, 
+        const vector<HHS>& HHSStrVec, 
         vector<HMMScore>& HMMScoreVec
     );
 
 
-   /**
+    /**
      * @author zezhen du
-     * @date 2023/07/04
+     * @date 2023/07/27
      * @version v1.0.1
-     * @brief 后验概率
+     * @brief Posterior probability
      * 
      * @param nodeStart         Starting position of the node
      * @param nodePtr           Pointer to the node
+     * @param topHapVec         Haplotypes screened by Dirichlet distribution
      * 
      * @return 0
     **/
     int posterior(
         uint32_t nodeStart, 
-        nodeSrt* nodePtr
+        nodeSrt* nodePtr, 
+        vector<uint16_t>& topHapVec
     );
+
+
+    /**
+     * @author zezhen du
+     * @date 2023/08/30
+     * @version v1.0.1
+     * @brief calculate Node k-mers Coverage
+     * 
+     * @param GraphKmerHashHapStrMapIterVec      Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
+     * @param nodeAveKmerCoverage                the average k-mers coverage of node
+     * @param kmerCoverageVec                    the k-mers vector of node
+     * 
+     * @return void
+    **/
+    void cal_node_cov(
+        const vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec, 
+        float & nodeAveKmerCoverage,
+        vector<uint8_t> & kmerCoverageVec
+    );
+
+
+    /**
+     * @author zezhen du
+     * @date 2023/07/27
+     * @version v1.0.1
+     * @brief calculate Phred Scaled
+     * 
+     * @param value       Posterior probability
+     * 
+     * @return Phred Scaled
+    **/
+    double cal_phred_scaled(long double value);
 
 
     /**
      * @author zezhen du
      * @date 2023/07/12
      * @version v1.0
-     * @brief 保存结果
+     * @brief Save the result
      * 
      * @param GraphMap            construct_index输出结果，map<string, map<uint32_t, nodeSrt>>
      * @param vcfHead             the VCF file comment lines
-     * @param vcfInfoMap          vcf信息，用于输出
-     * @param outputFileName      输出文件信息
+     * @param vcfInfoMap          vcf information for output
+     * @param outputFileName      Output file information
      * 
      * @return 0
     **/
     int save(
         map<string, map<uint32_t, nodeSrt> > & GraphMap, 
         string vcfHead, 
-        map<string, map<uint32_t, string> > & vcfInfoMap, 
+        map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
         const string & outputFileName
     );
 }
