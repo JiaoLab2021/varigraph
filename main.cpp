@@ -13,70 +13,305 @@ using namespace std;
 
 
 // define data
-#define PROGRAM_DATA "2023/08/31"
+#define PROGRAM_DATA "2024/01/22"
 // define version
-#define PROGRAM_VERSION "1.0.1"
+#define PROGRAM_VERSION "1.0.2"
 // define author
 #define PROGRAM_AUTHOR "Zezhen Du"
 // define E-mail
 #define PROGRAM_E_MAIL "dzz0539@gmail.com or dzz0539@163.com"
 
 
+int main_construct(int argc, char** argv);
+int main_genotype(int argc, char** argv);
+
 void help(char** argv);
+void help_construct(char** argv);
+void help_genotype(char** argv);
 
 int main(int argc, char** argv)
+{
+    // Print help document
+	if (argc == 1) {
+        help(argv);
+        return 1;
+    }
+
+    // Select the subfunction
+	string subcommand = argv[1];
+
+	if (subcommand == "-h" || subcommand == "--help") {
+		help(argv);
+        return 1;
+	} else if (subcommand == "construct") {
+		main_construct(argc, argv);
+	} else if (subcommand == "genotype") {
+        main_genotype(argc, argv);
+    } else {
+        cerr << "Error: ["<< argv[0] << "] command " << subcommand << " not found" << endl;
+		help(argv);
+        return 1;
+    }
+
+    return 0;
+}
+
+// help document
+void help(char** argv) {
+    cerr << "Usage: " << argv[0] << " <command> [options]" << endl
+         << "Perform genotyping and phasing based on k-mer counting." << endl
+         << endl
+         << "Data: " << PROGRAM_DATA << endl
+         << "Version: " << PROGRAM_VERSION << endl
+         << "Author: " << PROGRAM_AUTHOR << endl
+         << endl
+         << "Subcommands:" << endl
+         << "  construct        Construct a genome graph from the reference genome and variants." << endl
+         << "  genotype         Perform genotyping and phasing based on k-mer counting." << endl
+         << endl
+         << "  -h, --help       Display this help document." << endl;
+}
+
+int main_construct(int argc, char** argv)
 {
     // initial time
     double realtime0 = realtime();
 
     /* -------------------------------------------------- input/output -------------------------------------------------- */
     // reference genome
-    string refFileName;
-
-    // sequencing data
-    vector<string> fastqFileNameVec;
+    string refFileName;  // r
 
     // VCF file
-	string vcfFileName;
+	string vcfFileName;  // v
 
-    // output file
-    string outputFileName = "";
-
-    // sample name
-    string sampleName = "out";
-
-    /* -------------------------------------------------- genome type -------------------------------------------------- */
-    string genomeType = "homozygous";
+    // Genome Graph
+    string outputGraphFileName = "graph.bin";  // 1
 
     /* -------------------------------------------------- ploidy -------------------------------------------------- */
-    // reference -> 1
-    uint32_t refPloidy = 2;
-
-    // vcf -> 2
-    uint32_t vcfPloidy = 2;
-
-    /* -------------------------------------------------- genotyping arguments -------------------------------------------------- */
-    uint32_t haploidNum = 15;  // H
+    uint32_t vcfPloidy = 2;  // 2
 
     /* -------------------------------------------------- algorithm arguments -------------------------------------------------- */
 	// k-mer size
-	uint32_t kmerLen = 27;
+	uint32_t kmerLen = 27;  // k
 
-    // fast mode -> 3
-    bool fastMode = false;
+    // fast mode
+    bool fastMode = false;  // 3
+    
+    /* -------------------------------------------------- optional arguments -------------------------------------------------- */
+    // Debug code
+    bool debug = false;  // D
 
-    /* -------------------------------------------------- storing/loading index -------------------------------------------------- */
-    // Counting Bloom Filter
-    string outputMbfFileName = "";  // 4
-    string inputMbfFileName = "";  // 5
+	// thread
+	uint32_t threads = 10;  // t
 
+	// Input parameter
+    int c;
+    
+    while (true)
+    {
+        static const struct option long_options[] = 
+		{
+            {"reference", required_argument, 0, 'r'},
+			{"vcf", required_argument, 0, 'v'},
+            {"save-graph", required_argument, 0, 1},
+
+            {"vcf-ploidy", required_argument, 0, 2},
+
+            {"kmer", required_argument, 0, 'k'},
+            {"fast", no_argument, 0, 3},
+
+            {"debug", no_argument, 0, 'D'},
+            {"threads", required_argument, 0, 't'},
+            {"help", no_argument, 0, 'h'},
+            {0, 0, 0, 0}
+        };
+
+        int option_index = 0;
+
+        c = getopt_long (argc, argv, "r:v:1:2:k:3Dt:h", long_options, &option_index);
+
+        if (c == -1)
+            break;
+        
+        switch (c)
+        {
+        case 'r':
+            refFileName = optarg;
+            break;
+        case 'v':
+            vcfFileName = optarg;
+            break;
+        case 1:
+            outputGraphFileName = optarg;
+            break;
+
+        case 2:
+            vcfPloidy = max(stoi(optarg), 2);
+            break;
+
+        case 'k':
+            kmerLen = max(stoi(optarg), 5);
+            break;
+        case 3:
+            fastMode = true;
+            break;
+
+        case 'D':
+            debug = true;
+            break;
+        case 't':
+            threads = max(stoi(optarg), 1);
+            break;
+
+        case 'h':
+        case '?':
+            help_construct(argv);
+            exit(1);
+            break;
+        default:
+            abort ();
+        }
+    }
+
+    if (argc < 3 || argv[2] == "-h" || argv[2] == "--help") {
+        help_construct(argv);
+        return 1;
+    }
+
+    // Validate the parameters
+    if (refFileName.empty()) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -r. The reference genome file cannot be empty.\n\n";
+        help_construct(argv);
+        return 1;
+    }
+
+    if (vcfFileName.empty()) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -v. The VCF file cannot be empty.\n\n";
+        help_construct(argv);
+        return 1;
+    }
+
+    if (outputGraphFileName.empty()) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --save-graph. The Genome Graph file cannot be empty.\n\n";
+        help_construct(argv);
+        return 1;
+    }
+
+    if (vcfPloidy <= 0 || vcfPloidy > 8) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --vcf-ploidy. The provided value must be between 2 and 8 (inclusive).\n\n";
+        help_construct(argv);
+        return 1;
+    }
+
+    if (kmerLen <= 0 || kmerLen > 28) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -k. The provided value must be between 1 and 28 (inclusive).\n\n";
+        help_construct(argv);
+        return 1;
+    }
+    
+    // print log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "You are now running varigraph (v" << PROGRAM_VERSION << ").\n\n\n";
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Execution started ..." << endl;
+
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of threads: " << threads << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "k-mer size: " << kmerLen << endl;
+
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Reference file path: " << refFileName << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Variants file path: " << vcfFileName << endl;
+
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Ploidy of genotypes in the VCF file: " << vcfPloidy << endl;
+
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Fast mode: " << (fastMode ? "Enabled" : "Disabled") << endl << endl << endl;
+
+    // construct
+    vector<string> fastqFileNameVec;
+    Varigraph VarigraphClass(
+        refFileName, 
+        vcfFileName, 
+        fastqFileNameVec, 
+        "", 
+        outputGraphFileName, 
+        "", 
+        fastMode, 
+        kmerLen, 
+        "", 
+        "", 
+        0, 
+        vcfPloidy, 
+        0, 
+        0, 
+        "", 
+        false, 
+        debug, 
+        threads
+    );
+
+    // build the kmer index of reference and construct graph
+    VarigraphClass.construct();
+
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Done ...\n\n\n";
+
+    // output resource usage
+    fprintf(stderr, "[varigraph::%s] Real time: %.3f sec; CPU: %.3f sec; Peak RSS: %.3f GB\n", __func__, realtime() - realtime0, cputime(), peakrss() / 1024.0 / 1024.0 / 1024.0);
+
+    return 0;
+}
+
+// help document
+void help_construct(char** argv) {
+    cerr << "Usage: " << argv[0] << " " << argv[1] << " -r FILE -v FILE [options]" << endl
+         << "Construct a genome graph from the reference genome and variants." << endl
+         << endl
+         << "Input/Output Options:" << endl
+         << "    -r, --reference    FILE     input FASTA reference file" << endl
+         << "    -v, --vcf          FILE     VCF file for index building" << endl
+         << "    --save-graph       FILE     save Genome Graph index to file [graph.bin]" << endl
+         << endl
+         << "ploidy:" << endl
+         << "    --vcf-ploidy       INT      ploidy of genotypes in VCF file (2-8) [2]" << endl
+         << endl
+         << "algorithm arguments:" << endl
+         << "    -k, --kmer         INT      k-mer size (maximum: 28) [27]" << endl
+         << "    --fast                      enable 'fast mode' for increased speed at the cost of slightly reduced genotyping accuracy" << endl
+         << endl
+         << "optional arguments:" << endl
+         << "    -D, --debug                 enable debug code" << endl
+         << "    -t, --threads      INT      number of compute threads to use [10]" << endl
+         << endl
+         << "    -h, --help                  display this help document" << endl;
+}
+
+
+int main_genotype(int argc, char** argv)
+{
+    // initial time
+    double realtime0 = realtime();
+
+    /* -------------------------------------------------- input/output -------------------------------------------------- */
     // Genome Graph
-    string outputGraphFileName = "";  // 6
-    string inputGraphFileName = "";  // 7
+    string inputGraphFileName = "";  // 1
 
-    // k-mer index
-    string outputFastqKmerFileName = "";  // 8
-    string inputFastqKmerFileName = "";  // 9
+    // sequencing data
+    vector<string> fastqFileNameVec;  // f
+
+    // output file
+    string outputFileName = "";  // o
+
+    // sample name
+    string sampleName = "out";  // s
+
+    /* -------------------------------------------------- sample type -------------------------------------------------- */
+    string sampleType = "het";  // g
+
+    /* -------------------------------------------------- ploidy -------------------------------------------------- */
+    uint32_t samplePloidy = 2;  // 2
+
+    /* -------------------------------------------------- genotyping arguments -------------------------------------------------- */
+    uint32_t haploidNum = 15;  // n
+    uint32_t chrLenThread = 1 * 1000 * 1000;  // 3
+    string transitionProType = "fre";  // m: Transition probability type
+    bool svGenotypeBool = false;  // 4: structural variation genotyping only
     
     /* -------------------------------------------------- optional arguments -------------------------------------------------- */
     // Debug code
@@ -92,29 +327,20 @@ int main(int argc, char** argv)
     {
         static const struct option long_options[] = 
 		{
-            {"reference", required_argument, 0, 'r'},
+            {"load-graph", required_argument, 0, 1},
             {"fastq", required_argument, 0, 'f'},
-			{"vcf", required_argument, 0, 'v'},
             {"out", required_argument, 0, 'o'},
-            {"name", required_argument, 0, 'n'},
+            {"sample", required_argument, 0, 's'},
 
             {"genotype", required_argument, 0, 'g'},
 
-            {"genome-ploidy", required_argument, 0, '1'},
-            {"vcf-ploidy", required_argument, 0, '2'},
+            {"sample-ploidy", required_argument, 0, 2},
 
-            {"haploid", required_argument, 0, 'H'},
-
-            {"kmer", required_argument, 0, 'k'},
-            {"fast", no_argument, 0, '3'},
-
-            {"save-cbf", required_argument, 0, '4'},
-            {"load-cbf", required_argument, 0, '5'},
-            {"save-graph", required_argument, 0, '6'},
-            {"load-graph", required_argument, 0, '7'},
-            {"save-reads", required_argument, 0, '8'},
-            {"load-reads", required_argument, 0, '9'},
-
+            {"number", required_argument, 0, 'n'},
+            {"granularity", required_argument, 0, 3},
+            {"mode", required_argument, 0, 'm'},
+            {"sv", no_argument, 0, 4},
+            
             {"debug", no_argument, 0, 'D'},
             {"threads", required_argument, 0, 't'},
             {"help", no_argument, 0, 'h'},
@@ -123,68 +349,45 @@ int main(int argc, char** argv)
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "r:f:v:o:n:g:1:2:H:k:34:5:6:7:8:9:Dt:h", long_options, &option_index);
+        c = getopt_long (argc, argv, "1:f:o:s:g:2:n:3:m:4Dt:h", long_options, &option_index);
 
         if (c == -1)
             break;
         
         switch (c)
         {
-        case 'r':
-            refFileName = optarg;
+        case 1:
+            inputGraphFileName = optarg;
             break;
         case 'f':
             fastqFileNameVec.push_back(optarg);
             break;
-        case 'v':
-            vcfFileName = optarg;
-            break;
         case 'o':
             outputFileName = optarg;
             break;
-        case 'n':
+        case 's':
             sampleName = optarg;
             break;
 
         case 'g':
-            genomeType = optarg;
+            sampleType = optarg;
             break;
 
-        case '1':
-            refPloidy = max(stoi(optarg), 2);
-            break;
-        case '2':
-            vcfPloidy = max(stoi(optarg), 2);
+        case 2:
+            samplePloidy = max(stoi(optarg), 2);
             break;
 
-        case 'H':
+        case 'n':
             haploidNum = stoull(optarg);
             break;
-
-        case 'k':
-            kmerLen = max(stoi(optarg), 5);
+        case 3:
+            chrLenThread = stof(optarg) * 1e6;
             break;
-        case '3':
-            fastMode = true;
+        case 'm':
+            transitionProType = optarg;
             break;
-
-        case '4':
-            outputMbfFileName = optarg;
-            break;
-        case '5':
-            inputMbfFileName = optarg;
-            break;
-        case '6':
-            outputGraphFileName = optarg;
-            break;
-        case '7':
-            inputGraphFileName = optarg;
-            break;
-        case '8':
-            outputFastqKmerFileName = optarg;
-            break;
-        case '9':
-            inputFastqKmerFileName = optarg;
+        case 4:
+            svGenotypeBool = true;
             break;
 
         case 'D':
@@ -196,7 +399,7 @@ int main(int argc, char** argv)
 
         case 'h':
         case '?':
-            help(argv);
+            help_genotype(argv);
             exit(1);
             break;
         default:
@@ -204,105 +407,101 @@ int main(int argc, char** argv)
         }
     }
 
-    if (argc <= 2) {
-        help(argv);
+    if (argc < 3 || argv[2] == "-h" || argv[2] == "--help") {
+        help_genotype(argv);
         return 1;
     }
 
-    // Determine whether the parameters are correct
-    if (refFileName.empty()) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -r. The reference genome file is empty.\n\n";
-		help(argv);
+    // Validate the parameters
+    if (inputGraphFileName.empty()) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --load-graph. The genome graph file cannot be empty.\n\n";
+        help_genotype(argv);
         return 1;
     }
 
-    if (fastqFileNameVec.empty() && inputFastqKmerFileName.empty()) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: No sequencing files or sequencing file index provided.\n\n";
-		help(argv);
+    if (fastqFileNameVec.empty()) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -f. The reads file cannot be empty.\n\n";
+        help_genotype(argv);
         return 1;
     }
 
-    if (vcfFileName.empty()) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -v. The VCF file is empty.\n\n";
-		help(argv);
+    if (sampleType != "hom" && sampleType != "het") {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -g. The provided value must be either 'hom' or 'het'.\n\n";
+        help_genotype(argv);
         return 1;
     }
 
-    if (genomeType != "homozygous" && genomeType != "heterozygous") {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -g. The submitted parameter must be either 'homozygous' or 'heterozygous'.\n\n";
-		help(argv);
-        return 1;
-    }
-
-    if (refPloidy == 0 || refPloidy > 8) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -1. The submitted parameter must be between 2 and 8 (inclusive).\n\n";
-		help(argv);
-        return 1;
-    }
-
-    if (vcfPloidy == 0 || vcfPloidy > 8) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -2. The submitted parameter must be between 2 and 8 (inclusive).\n\n";
-		help(argv);
+    if (samplePloidy == 0 || samplePloidy > 8) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --sample-ploidy. The provided value must be between 2 and 8 (inclusive).\n\n";
+        help_genotype(argv);
         return 1;
     }
 
     if (haploidNum == 0) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -H. The submitted parameter must be greater than 0.\n\n";
-		help(argv);
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -n. The provided value must be greater than 0.\n\n";
+        help_genotype(argv);
+        return 1;
+    } else if (haploidNum < 10) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: -n. The number of haploids for genotyping is relatively low, which may affect the accuracy of genotyping.\n\n";
+    }
+
+    if (chrLenThread < 1) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --granularity. The chromosome granularity must be greater than 1 (" << chrLenThread << ").\n\n";
+        help_genotype(argv);
+        return 1;
+    } else if (chrLenThread < 1000) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: --granularity. The chromosome granularity is less than 1000 (" << chrLenThread << ").\n\n";
+    }
+
+    if (transitionProType != "fre" && transitionProType != "rec") {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -m. The transition probability type must be either 'fre' or 'rec'.\n\n";
+        help_genotype(argv);
         return 1;
     }
 
-    if (haploidNum < 10) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: -H. The number of haploid for genotyping is relatively small, which may affect the accuracy of genotyping..\n\n";
-    }
+    // Print log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "You are now running varigraph (v" << PROGRAM_VERSION << ").\n\n\n";
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Execution started ..." << endl;
 
-    if (kmerLen <= 0 || kmerLen > 28) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -k. The submitted parameter must be between 1 and 28 (inclusive).\n\n";
-		help(argv);
-        return 1;
-    }
-    
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of threads: " << threads << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Genome graph file: " << inputGraphFileName << endl;
 
-    // print log
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "You are using varigraph (v" << PROGRAM_VERSION << ")\n\n\n";
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Running ..." << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Threads: " << threads << endl;
-	cerr << "[" << __func__ << "::" << getTime() << "] " << "k-mer size: " << kmerLen << endl;
-	cerr << "[" << __func__ << "::" << getTime() << "] " << "Reference file: " << refFileName << endl;
-	cerr << "[" << __func__ << "::" << getTime() << "] " << "Variants file: " << vcfFileName << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Status of the reference genome: " << genomeType << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Genome ploidy: " << refPloidy << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Ploidy of genotypes in VCF file: " << vcfPloidy << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Haploid number for genotyping: " << haploidNum << endl;
-	cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug: " << debug << endl;
-	cerr << "[" << __func__ << "::" << getTime() << "] " << "Fast mode: " << fastMode << endl << endl << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample genome status: " << sampleType << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample ploidy: " << samplePloidy << endl;
 
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of haploids for genotyping: " << haploidNum << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Chromosome granularity: " << chrLenThread << " bp" << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Transition probability type: " << transitionProType << endl;
+
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Structural variation genotyping only: " << (svGenotypeBool ? "Enabled" : "Disabled") << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl << endl << endl;
 
     // construct, index and genotype
+    uint32_t kmerLen = 27;
+    uint32_t vcfPloidy = 2;
     Varigraph VarigraphClass(
-        refFileName, 
+        "", 
+        "", 
         fastqFileNameVec, 
-        vcfFileName, 
-        inputMbfFileName, 
         inputGraphFileName, 
-        inputFastqKmerFileName, 
-        outputMbfFileName, 
-        outputGraphFileName, 
-        outputFastqKmerFileName, 
+        "", 
         outputFileName, 
-        fastMode, 
+        false, 
         kmerLen, 
         sampleName, 
-        genomeType, 
-        refPloidy, 
+        sampleType, 
+        samplePloidy, 
         vcfPloidy, 
         haploidNum, 
+        chrLenThread, 
+        transitionProType, 
+        svGenotypeBool, 
         debug, 
         threads
     );
 
-    // build the kmer index of reference and construct graph
-    VarigraphClass.ref_idx_construct();
+    // load the genome graph from file
+    VarigraphClass.load();
 
     // build the kmer index of files
     VarigraphClass.kmer_read();
@@ -319,47 +518,32 @@ int main(int argc, char** argv)
 }
 
 // help document
-void help(char** argv)
+void help_genotype(char** argv)
 {
-  cerr << "usage: " << argv[0] << " -r FILE -v FILE -f FILE [options]" << endl
-       << "Genotyping and phasing based on k-mer counting" << endl
-       << endl
-       << "data: " << PROGRAM_DATA << endl
-       << "version: " << PROGRAM_VERSION << endl
-       << "author: " << PROGRAM_AUTHOR << endl
-       << endl
-       << "input/output:" << endl
-       << "    -r, --reference    FILE     input FASTA reference file" << endl
-	   << "    -f, --fastq        FILE     fastq files for index building, two are allowed, one for each mate" << endl
-	   << "    -v, --vcf          FILE     VCF file for index building" << endl
-       << "    -o, --out          FILE     output genotyping to FILE [stdout]" << endl
-       << "    -n, --name         STRING   sample name for VCF annotation line [out]" << endl
-       << endl
-       << "genome type:" << endl
-       << "    -g, --genotype     STRING   specify the genotype of the reference genome (homozygous/heterozygous) [homozygous]" << endl
-       << endl
-       << "ploidy:" << endl
-       << "    --genome-ploidy    INT      genome ploidy (2-8) [2]" << endl
-       << "    --vcf-ploidy       INT      ploidy of genotypes in VCF file (2-8) [2]" << endl
-       << endl
-       << "genotyping arguments:" << endl
-       << "    -H, --haploid      INT      the haploid number for genotyping [15]" << endl
-       << endl
-       << "algorithm arguments:" << endl
-       << "    -k, --kmer         INT      k-mer size (maximum: 28) [27]" << endl
-       << "    --fast                      fast mode with slightly decreased genotyping accuracy" << endl
-       << endl
-       << "storing/loading index:" << endl
-       << "    --save-cbf         FILE     save Counting Bloom Filter index information to a file (optional)" << endl
-       << "    --load-cbf         FILE     load Counting Bloom Filter index information from a file (optional)" << endl
-       << "    --save-graph       FILE     save Genome Graph index information to a file (optional)" << endl
-       << "    --load-graph       FILE     load Genome Graph index information from a file (optional)" << endl
-       << "    --save-reads       FILE     save fastq index information to a file (optional)" << endl
-       << "    --load-reads       FILE     load fastq index information from a file (optional)" << endl
-	   << endl
-	   << "optional arguments:" << endl
-       << "    -D, --debug                 enable debug code" << endl
-	   << "    -t, --threads      INT      number of compute threads to use [10]" << endl
-       << endl
-       << "    -h, --help                  print this help document" << endl;
+    cerr << "Usage: " << argv[0] << " " << argv[1] << " --load-graph FILE -f FILE [options]" << endl
+         << "Perform genotyping and phasing based on k-mer counting." << endl
+         << endl
+         << "Input/Output Options:" << endl
+         << "    --load-graph       FILE     load Genome Graph index from file generated by '" << argv[0] << " construct'" << endl
+         << "    -f, --fastq        FILE     fastq files for index building, two are allowed, one for each mate" << endl
+         << "    -o, --out          FILE     output genotyping to FILE [stdout]" << endl
+         << "    -s, --sample       STRING   name the sample in the VCF with the given name [out]" << endl
+         << endl
+         << "genome type:" << endl
+         << "    -g, --genotype     STRING   specify the sample genotype as either 'hom' for homozygous or 'het' for heterozygous [het]" << endl
+         << endl
+         << "ploidy:" << endl
+         << "    --sample-ploidy    INT      sample ploidy (2-8) [2]" << endl
+         << endl
+         << "genotyping arguments:" << endl
+         << "    -n, --number       INT      the haploid number for genotyping [15]" << endl
+         << "    --granularity      FLOAT    control the chromosome length processed by each thread (unit: Mb) [1]" << endl
+         << "    -m, --mode         STRING   using haplotype frequency (fre) or recombination rate (rec) as transition probability [fre]" << endl
+         << "    --sv                        structural variation genotyping only" << endl
+         << endl
+         << "optional arguments:" << endl
+         << "    -D, --debug                 enable debug code" << endl
+         << "    -t, --threads      INT      number of compute threads to use [10]" << endl
+         << endl
+         << "    -h, --help                  display this help document" << endl;
 }

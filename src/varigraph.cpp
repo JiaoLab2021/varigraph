@@ -5,60 +5,57 @@
 
 Varigraph::Varigraph(
     const string& refFileName, 
-    const vector<string>& fastqFileNameVec, 
     const string& vcfFileName, 
-    const string& inputMbfFileName, 
+    const vector<string>& fastqFileNameVec, 
     const string& inputGraphFileName, 
-    const string& inputFastqKmerFileName, 
-    const string& outputMbfFileName, 
     const string& outputGraphFileName, 
-    const string& outputFastqKmerFileName, 
     const string& outputFileName, 
     const bool& fastMode, 
-    const uint32_t& kmerLen, 
+    uint32_t& kmerLen, 
     const string& sampleName, 
-    const string& genomeType, 
-    const uint32_t& refPloidy, 
-    const uint32_t& vcfPloidy, 
+    const string& sampleType, 
+    const uint32_t& samplePloidy, 
+    uint32_t& vcfPloidy, 
     const uint32_t& haploidNum, 
+    const uint32_t& chrLenThread, 
+    const string& transitionProType, 
+    const bool& svGenotypeBool, 
     const bool& debug, 
     const uint32_t& threads
-) : refFileName_(refFileName), fastqFileNameVec_(fastqFileNameVec), vcfFileName_(vcfFileName), inputMbfFileName_(inputMbfFileName), inputGraphFileName_(inputGraphFileName), inputFastqKmerFileName_(inputFastqKmerFileName), 
-    outputMbfFileName_(outputMbfFileName), outputGraphFileName_(outputGraphFileName), outputFastqKmerFileName_(outputFastqKmerFileName), outputFileName_(outputFileName), 
-    fastMode_(fastMode), kmerLen_(kmerLen), sampleName_(sampleName), genomeType_(genomeType), refPloidy_(refPloidy), vcfPloidy_(vcfPloidy), haploidNum_(haploidNum), debug_(debug), threads_(threads) {
-        // cerr
-        std::cerr.imbue(std::locale(""));  // Thousandth output
-    }
+) : refFileName_(refFileName), vcfFileName_(vcfFileName), fastqFileNameVec_(fastqFileNameVec), inputGraphFileName_(inputGraphFileName), 
+    outputGraphFileName_(outputGraphFileName), outputFileName_(outputFileName), 
+    fastMode_(fastMode), kmerLen_(kmerLen), sampleName_(sampleName), sampleType_(sampleType), samplePloidy_(samplePloidy), vcfPloidy_(vcfPloidy), haploidNum_(haploidNum), 
+    chrLenThread_(chrLenThread), transitionProType_(transitionProType), svGenotypeBool_(svGenotypeBool), debug_(debug), threads_(threads) {
+    // cerr
+    std::cerr.imbue(std::locale(""));  // Thousandth output
+}
 
 
-Varigraph::~Varigraph()
-{
+Varigraph::~Varigraph() {
     if (ConstructIndexClassPtr_ != nullptr) {
         delete ConstructIndexClassPtr_;
         ConstructIndexClassPtr_ = nullptr;
     }
 };
 
+
 /**
  * @author zezhen du
- * @date 2023/06/27
+ * @date 2024/01/04
  * @version v1.0.1
- * @brief build the kmer index of reference and construct graph
+ * @brief Construct genome graph from reference genome and variants
  * 
  * @return void
 **/
-void Varigraph::ref_idx_construct()
+void Varigraph::construct()
 {
     ConstructIndexClassPtr_ = new ConstructIndex(
         refFileName_, 
         vcfFileName_, 
-        inputMbfFileName_, 
         inputGraphFileName_, 
-        outputMbfFileName_, 
         outputGraphFileName_, 
         fastMode_, 
         kmerLen_, 
-        sampleName_, 
         vcfPloidy_, 
         debug_, 
         threads_
@@ -67,31 +64,66 @@ void Varigraph::ref_idx_construct()
     // Building the k-mers index of reference genome
     ConstructIndexClassPtr_->build_fasta_index();
 
-    if (inputGraphFileName_.empty()) {
-        // Counting Bloom Filter
-        ConstructIndexClassPtr_->make_mbf();
+    // Counting Bloom Filter
+    ConstructIndexClassPtr_->make_mbf();
 
-        // Genome Graph construction
-        ConstructIndexClassPtr_->construct();
+    // Genome Graph construction
+    ConstructIndexClassPtr_->construct();
 
-        // building the k-mer index of graph
-        ConstructIndexClassPtr_->index();
+    // make mHapIdxQRmap
+    ConstructIndexClassPtr_->make_QRmap();
 
-        // save Genome Graph to file
-        if (!outputGraphFileName_.empty()) {
-            ConstructIndexClassPtr_->save_index();
-        }
+    // building the k-mer index of graph
+    ConstructIndexClassPtr_->index();
 
-        // Free memory (Counting Bloom Filter)
-        ConstructIndexClassPtr_->clear_mbf();
-        
-    } else {
-        // VCF index
-        ConstructIndexClassPtr_->construct();
-
-        // load Genome Graph from file
-        ConstructIndexClassPtr_->load_index();
+    // save Genome Graph to file
+    if (!outputGraphFileName_.empty()) {
+        ConstructIndexClassPtr_->save_index();
     }
+
+    // Free memory (Counting Bloom Filter)
+    ConstructIndexClassPtr_->clear_mbf();
+    
+    // log
+    cerr << endl;
+    cerr << "           - " << "Number of k-mers in the Genome Graph: " << ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.size() << endl;
+    cerr << "           - " << "Number of haplotypes in the Genome Graph: " << ConstructIndexClassPtr_->mHapMap.size() << endl << endl << endl;
+}
+
+
+/**
+ * @author zezhen du
+ * @date 2024/01/04
+ * @version v1.0.1
+ * @brief Load genome graph
+ * 
+ * @return void
+**/
+void Varigraph::load()
+{
+    ConstructIndexClassPtr_ = new ConstructIndex(
+        refFileName_, 
+        vcfFileName_, 
+        inputGraphFileName_, 
+        outputGraphFileName_, 
+        false, 
+        kmerLen_, 
+        vcfPloidy_, 
+        debug_, 
+        threads_
+    );
+
+    // load Genome Graph from file
+    ConstructIndexClassPtr_->load_index();
+
+    // make mHapIdxQRmap
+    ConstructIndexClassPtr_->make_QRmap();
+
+    // k-mer length
+    kmerLen_ = ConstructIndexClassPtr_->mKmerLen;
+
+    // vcf ploidy
+    vcfPloidy_ = ConstructIndexClassPtr_->mVcfPloidy;
     
     // log
     cerr << endl;
@@ -117,50 +149,212 @@ void Varigraph::kmer_read()
         kmerLen_, 
         threads_
     );
-    
-    // Calculate coverage using sequencing files
-    if (inputFastqKmerFileName_.empty()) {
-        FastqKmerClass.build_fastq_index();
 
-        // save to file
-        if (!outputFastqKmerFileName_.empty()) {
-            FastqKmerClass.save_index(outputFastqKmerFileName_);
-        }
-    } else {  // load coverage from file
-        FastqKmerClass.load_index(inputFastqKmerFileName_);
-    }
+    // Calculate coverage using sequencing files
+    FastqKmerClass.build_fastq_index();
 
     // sequencing data depth
     ReadDepth_ = FastqKmerClass.mReadBase / (float)ConstructIndexClassPtr_->mGenomeSize;
 
-    // Calculate Average Coverage (variants k-mers)
-    uint64_t allKmerNum = 0;
-    uint64_t allKmerCov = std::accumulate(
-        ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.begin(), 
-        ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.end(), 
-        0ull,
-        [&allKmerNum](int sum, const auto& pair) mutable {
-            // if (pair.second.c > 0 && pair.second.f == 1) {
-            if (pair.second.c > 1 && pair.second.f == 1) {  // 2023/09/27
-                ++allKmerNum;
-                return sum + pair.second.c;
-            } else {
-                return sum;
-            }
-        }
-    );
-    float aveKmerCoverage = (allKmerNum > 0) ? static_cast<float>(allKmerCov) / allKmerNum : 0.0f;
+    // Calculate Average Coverage (variants k-mers)  2023/12/05
+    cal_ave_cov_kmer();
 
     cerr << endl;
     cerr << fixed << setprecision(2);
     cerr << "           - " << "Size of sequencing data: " << FastqKmerClass.mReadBase / 1e9 << " Gb" << endl;
     cerr << "           - " << "Sequencing data depth: " << ReadDepth_ << endl;
-    cerr << "           - " << "Average coverage of k-mers: " << aveKmerCoverage << endl << endl << endl;
+    cerr << "           - " << "Haplotype k-mer coverage: " << hapKmerCoverage_ << endl << endl << endl;
     cerr << defaultfloat << setprecision(6);
 
     // Merge k-mer information from Genome Graph into nodes.
     ConstructIndexClassPtr_->graph2node();
-    // ConstructIndexClassPtr_->clear_mGraphKmerCovFreMap();
+}
+
+
+/**
+ * @author zezhen du
+ * @date 2024/01/19
+ * @version v1.0.1
+ * @brief calculate the average coverage of k-mers
+ * 
+ * @return void
+**/
+void Varigraph::cal_ave_cov_kmer() {
+    // homozygous k-mer (variants k-mers, map<coverage, frequence>)
+    map<uint8_t, uint64_t> kmerCovFreMap = get_hom_kmer();
+
+    // Get k-mers frequency
+    uint8_t maxCoverage;  // Maximum coverage of k-mer
+    uint8_t homCoverage;  // Homozygous k-mer coverage
+    tie(maxCoverage, homCoverage) = get_hom_kmer_c(kmerCovFreMap);
+
+    // haplotype k-mers coverage
+    cal_hap_kmer_cov(homCoverage);
+
+    // print hist lines
+    kmer_histogram(
+        maxCoverage, 
+        homCoverage, 
+        kmerCovFreMap
+    );
+}
+
+/**
+ * @author zezhen du
+ * @date 2024/01/22
+ * @version v1.0.1
+ * @brief Get homozygous k-mer
+ * 
+ * @return kmerCovFreMap   map<coverage, frequency>
+**/
+map<uint8_t, uint64_t> Varigraph::get_hom_kmer() {
+    // Calculate Average Coverage (variants k-mers)
+    map<uint8_t, uint64_t> kmerCovFreMap;  // map<coverage, frequency>
+
+    // Quotient and remainder for each haplotype in topHapVec
+    const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap = ConstructIndexClassPtr_->mHapIdxQRmap;  // map<hapIdx, tuple<quotient, remainder> >
+
+    for (const auto& pair : ConstructIndexClassPtr_->mGraphKmerHashHapStrMap) {
+        uint8_t c = pair.second.c;
+
+        if (c == 0 || pair.second.f > 1) {  // If the coverage is 0 or the frequency is greater than 1, the k-mer is skipped
+            continue;
+        }
+
+        int totalHomSampleCount = 0;  // The number of homozygous samples for this k-mer
+
+        int index = 0;  // haplotype index
+        int sampleCount = 0;  // the number of sample contained
+        for (size_t i = 1; i < ConstructIndexClassPtr_->mHapNum; i++) {
+            index++;
+
+            // Determine whether the haplotype contains the k-mer
+            if (construct_index::get_bit(pair.second.BitVec[get<0>(hapIdxQRmap.at(i))], get<1>(hapIdxQRmap.at(i))) > 0) {
+                sampleCount++;
+            }
+
+            if (index == vcfPloidy_) {  // one sample
+                index = 0;
+                if (sampleCount == vcfPloidy_) {  // Only record homozygous k-mers
+                    totalHomSampleCount++;
+                    break;  // If it is a homozygous k-mer, because totalHomSampleCount is already equal to 1, jump out of the for loop directly.
+                }
+                sampleCount = 0;
+            }
+        }
+
+        // Is the number of homozygous samples greater than 0?
+        if (totalHomSampleCount > 0) {
+            auto& emplacedValue = kmerCovFreMap.emplace(c, 0).first->second;
+            emplacedValue++;
+        }
+    }
+    return move(kmerCovFreMap);
+}
+
+/**
+ * @author zezhen du
+ * @date 2024/01/22
+ * @version v1.0.1
+ * @brief Looking for the k-mer peak
+ * 
+ * @param kmerCovFreMap   map<coverage, frequence>
+ * 
+ * @return maxCoverage, homCoverage
+**/
+tuple<uint8_t, uint8_t> Varigraph::get_hom_kmer_c(const map<uint8_t, uint64_t>& kmerCovFreMap) {
+    // Get the k-mers with the highest frequency
+    vector<uint8_t> coverageVec;
+    vector<uint64_t> frequencyVec;
+    int16_t index = -1;
+    int16_t maxIndex = -1;
+    uint8_t maxCoverage = 0;
+    uint64_t maxFrequency = 0;
+    uint8_t homCoverage = 0;  // Homozygous k-mer coverage
+    for (const auto& [coverage, frequency] : kmerCovFreMap) {
+        coverageVec.push_back(coverage);
+        frequencyVec.push_back(frequency);
+        index++;
+        if (coverage > 1 && frequency >= maxFrequency && coverage < UINT8_MAX) {
+            maxIndex = index;
+            maxCoverage = coverage;
+            maxFrequency = frequency;
+            homCoverage = coverage;
+        }
+    }
+
+    // Check if the data is correct
+    if (maxIndex == -1) {
+        cerr << "[" << __func__ << "::" << getTime() << "] "
+            << "Error: unable to obtain depth information of k-mers in the sequencing data, please check your data." << endl;
+        exit(1);
+    }
+    
+    // look for smaller peak on the right
+    for (size_t i = maxIndex + 1; i < frequencyVec.size() - 1; i++) {
+        if (coverageVec[i] > ReadDepth_) {  // the peak value must be smaller than the sequencing depth
+            break;
+        }
+        
+        // Determine whether it is a peak value
+        if (frequencyVec[i] >= frequencyVec[i-1] && frequencyVec[i] >= frequencyVec[i+1]) {  // peak
+            homCoverage = coverageVec[i];
+        }
+    }
+    return {maxCoverage, homCoverage};
+}
+
+/**
+ * @author zezhen du
+ * @date 2024/01/22
+ * @version v1.0.1
+ * @brief calculate haplotype kmer coverage
+ * 
+ * @param homCoverage
+ * 
+ * @return void
+**/
+void Varigraph::cal_hap_kmer_cov(const uint8_t& homCoverage) {
+    hapKmerCoverage_ = (homCoverage > 0 && samplePloidy_ > 0) ? static_cast<float>(homCoverage) / static_cast<float>(vcfPloidy_) : ReadDepth_ / static_cast<float>(vcfPloidy_);
+}
+
+/**
+ * @author zezhen du
+ * @date 2024/01/22
+ * @version v1.0.1
+ * @brief Print histogram
+ * 
+ * @param maxCoverage
+ * @param homCoverage
+ * @param kmerCovFreMap   map<coverage, frequence>
+ * 
+ * @return void
+**/
+void Varigraph::kmer_histogram(
+    const uint8_t& maxCoverage, 
+    const uint8_t& homCoverage, 
+    const map<uint8_t, uint64_t>& kmerCovFreMap
+) {
+    uint64_t maxFrequency = kmerCovFreMap.at(maxCoverage);
+
+    cerr << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "highest: count[" << +maxCoverage << "] = " << maxFrequency << endl;
+    for (const auto& [coverage, frequence] : kmerCovFreMap) {
+        int starNum = static_cast<int>(round(static_cast<double>(frequence) / maxFrequency * 100));  // The number of stars corresponding to k-mer
+        if (starNum == 0) {  // If 0, skip
+            continue;
+        }
+        // print hist log
+        cerr << "[" << __func__ << "::" << getTime() << "] " << setw(3) << +coverage << ": ";
+        for (int j = 0; j < min(starNum, 100); ++j) {
+            cerr << '*';
+        }
+        if (starNum > 100) {
+            cerr << ">";
+        }
+        cerr << " " << frequence << endl;
+    }
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "peak_hom: " << +homCoverage << "; peak_hap: " << hapKmerCoverage_ << endl;
 }
 
 
@@ -177,16 +371,22 @@ void Varigraph::genotype()
 {
     // genotype
     GENOTYPE::genotype(
+        ConstructIndexClassPtr_->mFastaLenMap, 
         ConstructIndexClassPtr_->mGraphMap, 
         ConstructIndexClassPtr_->mHapMap, 
         ConstructIndexClassPtr_->mVcfHead, 
         ConstructIndexClassPtr_->mVcfInfoMap, 
-        genomeType_, 
-        refPloidy_, 
-        ReadDepth_, 
+        ConstructIndexClassPtr_->mHapIdxQRmap, 
+        sampleType_, 
+        samplePloidy_, 
+        hapKmerCoverage_, 
+        sampleName_, 
         outputFileName_, 
         kmerLen_, 
         haploidNum_, 
+        chrLenThread_, 
+        transitionProType_, 
+        svGenotypeBool_, 
         threads_, 
         debug_
     );

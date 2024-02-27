@@ -14,22 +14,16 @@ int SAVE::save(
 {
     outTxt = strip(outTxt, '\n');  // remove '\n'
 
-    if (outTxt.empty())
-    {
+    if (outTxt.empty()) {
         return 0;
     }
 
-    if (outputFileName_.find(".gz") != string::npos || outputFileName_.find(".GZ") != string::npos)
-    {
+    if (outputFileName_.find(".gz") != string::npos || outputFileName_.find(".GZ") != string::npos) {
         outTxt += "\n";
         gzwrite(gzfpO, outTxt.c_str(), outTxt.length());
-    }
-    else if (outputFileName_.size() > 0)
-    {
+    } else if (outputFileName_.size() > 0) {
         fpO << outTxt << endl;
-    }
-    else
-    {
+    } else {
         cout << outTxt << endl;
     }
     

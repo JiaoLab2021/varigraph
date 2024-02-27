@@ -5,7 +5,7 @@
 using namespace std;
 
 
-// kseq.h ���ļ�
+// kseq.h
 KSEQ_INIT(gzFile, gzread)
 
 
@@ -15,7 +15,7 @@ KSEQ_INIT(gzFile, gzread)
  * @version v1.0
  * @brief building the kmer index of sequencing read
  * 
- * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
+ * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVecP>
  * @param fastqFileNameVec       the vector of sequencing read
  * @param kmerLen                the length of k-mer
  * @param threads                threads
@@ -46,7 +46,7 @@ void FastqKmer::build_fastq_index()
     }
 
     for (auto fastqFileName : fastqFileNameVec_) {
-        FastqKmer::fastq_file_open(fastqFileName, mReadBase);
+        FastqKmer::fastq_file_open(fastqFileName);
     }
 
     malloc_trim(0); // 0 is for heap memory
@@ -60,13 +60,11 @@ void FastqKmer::build_fastq_index()
  * @brief building the kmer index of sequencing read
  * 
  * @param fastqFileName       sequencing read
- * @param ReadBase            Sequencing file size
  * 
  * @return void
 **/
 void FastqKmer::fastq_file_open(
-    const string & fastqFileName, 
-    uint64_t& ReadBase
+    const string & fastqFileName
 )
 {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from read: " << fastqFileName << endl;  // print log
@@ -106,7 +104,7 @@ void FastqKmer::fastq_file_open(
             transform(sequence.begin(),sequence.end(),sequence.begin(),::toupper);
 
             // read size
-            ReadBase += ks->seq.l;
+            mReadBase += ks->seq.l;
 
             // Store sequences for multithreaded submission
             sequenceVecTmp.push_back(sequence);
@@ -135,8 +133,9 @@ void FastqKmer::fastq_file_open(
                     // Record coverage of variant k-mers
                     for (const auto& hash : hashVecTmp) {  // vector<uint64_t>
                         auto& kmerCov = GraphKmerHashHapStrMap_[hash].c;
-                        if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
-                            ++kmerCov;
+                        // if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
+                        if (kmerCov < UINT8_MAX) {  // Prevent variable out of bounds
+                            kmerCov++;
                         }
                     }
                 }
@@ -173,8 +172,9 @@ void FastqKmer::fastq_file_open(
             // Record coverage of variant k-mers
             for (const auto& hash : hashVecTmp) {  // vector<uint64_t>
                 auto& kmerCov = GraphKmerHashHapStrMap_[hash].c;
-                if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
-                    ++kmerCov;
+                // if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
+                if (kmerCov < UINT8_MAX) {  // Prevent variable out of bounds
+                    kmerCov++;
                 }
             }
         }

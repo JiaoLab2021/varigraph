@@ -5,8 +5,10 @@
 
 using namespace std;
 
-std::mutex mtxCI;
+// global variable
+bool debugConstruct = false;
 
+std::mutex mtxCI;
 
 // kseq.h
 KSEQ_INIT(gzFile, gzread)
@@ -15,26 +17,26 @@ KSEQ_INIT(gzFile, gzread)
 ConstructIndex::ConstructIndex(
     const string& refFileName, 
     const string& vcfFileName, 
-    const string& inputMbfFileName, 
     const string& inputGraphFileName, 
-    const string& outputMbfFileName, 
     const string& outputGraphFileName, 
     const bool& fastMode, 
     const uint32_t& kmerLen, 
-    const string& sampleName, 
     const uint32_t& vcfPloidy, 
     const bool& debug, 
     const uint32_t& threads
-) : refFileName_(refFileName), vcfFileName_(vcfFileName), inputMbfFileName_(inputMbfFileName), inputGraphFileName_(inputGraphFileName), outputMbfFileName_(outputMbfFileName), outputGraphFileName_(outputGraphFileName), 
-    fastMode_(fastMode), kmerLen_(kmerLen), sampleName_(sampleName), vcfPloidy_(vcfPloidy), debug_(debug), threads_(threads)
+) : refFileName_(refFileName), vcfFileName_(vcfFileName), inputGraphFileName_(inputGraphFileName), outputGraphFileName_(outputGraphFileName), 
+    fastMode_(fastMode), mKmerLen(kmerLen), mVcfPloidy(vcfPloidy), threads_(threads)
 {
     mHapMap[0] = "reference";
+
+    // debug
+    debugConstruct = debug;
+    if (debugConstruct) threads_ = 1;
 }
 
 ConstructIndex::~ConstructIndex()
 {
-    if (mbf != nullptr)
-    {
+    if (mbf != nullptr) {
         delete mbf;  // Release the memory occupied by the Counting Bloom filter
         mbf = nullptr;
     }
@@ -50,7 +52,7 @@ ConstructIndex::~ConstructIndex()
 **/
 void ConstructIndex::clear_mbf()
 {
-    unordered_map<string, string>().swap(mFastaMap);
+    unordered_map<string, string>().swap(mFastaSeqMap);
     if (mbf != nullptr) {
         delete mbf;
         mbf = nullptr;
@@ -67,7 +69,9 @@ void ConstructIndex::clear_mbf()
  * @return void
 **/
 void ConstructIndex::clear_mGraphKmerCovFreMap() {
+    // Clear unordered_map
     unordered_map<uint64_t, kmerCovFreBitVec>().swap(mGraphKmerHashHapStrMap);
+
     malloc_trim(0);	// 0 is for heap memory
 }
 
@@ -98,18 +102,28 @@ void ConstructIndex::build_fasta_index()
         // Define local variables to avoid frequent application and release of memory inside the loop
         string chromosome;
         string sequence;
+        uint32_t sequenceLen;
 
         while( kseq_read(ks) >= 0 ) {
             // ks->name.s  name
             // ks->seq.s   sequence
             chromosome = ks->name.s;
             sequence = ks->seq.s;
+            sequenceLen = ks->seq.l;
 
             // record the length of sequence
             mGenomeSize += ks->seq.l;
 
             // build fasta index
-            mFastaMap.emplace(chromosome, sequence);
+            mFastaSeqMap.emplace(chromosome, sequence);
+            mFastaLenMap.emplace(chromosome, sequenceLen);
+
+            // Check if chromosome length is greater than UINT32_MAX
+            if (sequence.length() > UINT32_MAX) {
+                cerr << "[" << __func__ << "::" << getTime() << "] " 
+                    << "'" << chromosome << "' length is greater than 4,294,967,295." << endl;
+                exit(1);
+            }
         }
 
         // free memory and close file
@@ -139,34 +153,21 @@ void ConstructIndex::make_mbf()
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Calculating k-mer frequency in reference genome ...\n";
 
     /* *************************************************** making or load *************************************************** */
-    uint64_t bfSize = mGenomeSize - kmerLen_ + 1;
+    uint64_t bfSize = mGenomeSize - mKmerLen + 1;
     double errorRate = 0.01;
     mbf = new BloomFilter(bfSize, errorRate);
 
     // making
-    if (inputMbfFileName_.empty()) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Making Counting Bloom Filter with a false positive rate of " << errorRate << " ...\n";
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Making Counting Bloom Filter with a false positive rate of " << errorRate << " ...\n";
 
-        for (const auto& [chromosome, sequence] : mFastaMap) {  // map<chromosome, sequence>
-            // Constructing k-mer index
-            kmerBit::kmer_sketch_bf(sequence, kmerLen_, mbf);
+    for (const auto& [chromosome, sequence] : mFastaSeqMap) {  // map<chromosome, sequence>
+        // Constructing k-mer index
+        kmerBit::kmer_sketch_bf(sequence, mKmerLen, mbf);
 
-            cerr << "[" << __func__ << "::" << getTime() << "] " << "Successfully processed chromosome '" << chromosome << "' ...\n";
-        }
-
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom Filter successfully constructed ..." << endl;
-
-        // save to file
-        if (!outputMbfFileName_.empty()) {
-            mbf->save(outputMbfFileName_);
-        }
-        
-        cerr << endl;
-    } else {  // load from file
-        mbf->load(inputMbfFileName_);
-
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom Filter successfully loaded ..." << endl << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Successfully processed chromosome '" << chromosome << "' ...\n";
     }
+
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom Filter successfully constructed ..." << endl << endl;
     
     cerr << "           - " << "Size of Counting Bloom Filter: " << mbf->get_size() << endl;
     cerr << "           - " << "Number of hash functions: " << mbf->get_num() << endl;
@@ -191,6 +192,7 @@ void ConstructIndex::construct()
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Constructing ...\n";  // print log
 
     // Record the position of the previous node
+    uint32_t tmpRefStart = 0;
     uint32_t tmpRefEnd = 0;
     string tmpChromosome;
 
@@ -208,6 +210,9 @@ void ConstructIndex::construct()
         line = strip(line, '\n');  // remove trailing newline
 
         // First judge whether it is a comment line, if yes, skip
+        if (line.find("##FORMAT") != string::npos) {
+            continue;
+        }
         if (line.find("#") != string::npos && line.find("#CHROM") == string::npos) {
             mVcfHead += line + "\n";  // Store VCF file comment line
             continue;
@@ -220,7 +225,7 @@ void ConstructIndex::construct()
         // Check if the file is correct, if not, jump out of the code
         if (lineVec.size() < 10) {
             cerr << "[" << __func__ << "::" << getTime() << "] "
-                    << "'" << vcfFileName_  << "': Error -> number of columns in the VCF file is less than 10.: " << lineVec.size() << endl;
+                    << "'" << vcfFileName_  << "': Error -> number of columns in the VCF file is less than 10: " << lineVec.size() << endl;
             exit(1);
         }
 
@@ -228,16 +233,16 @@ void ConstructIndex::construct()
         if (line.find("#CHROM") != string::npos) {
             mVcfHead += "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
             mVcfHead += "##FORMAT=<ID=GQ,Number=1,Type=Float,Description=\"Genotype quality (phred-scaled 1 - max(GPP))\">\n";
-            mVcfHead += "##FORMAT=<ID=GPP,Number=1,Type=Integer,Description=\"Genotype posterior probabilities\">\n";
+            mVcfHead += "##FORMAT=<ID=GPP,Number=1,Type=String,Description=\"Genotype posterior probabilities\">\n";
             mVcfHead += "##FORMAT=<ID=NAK,Number=R,Type=Float,Description=\"Number of allele k-mers\">\n";
-            mVcfHead += "##FORMAT=<ID=KC,Number=R,Type=Float,Description=\"Coverage of allele k-mers\">\n";
-            mVcfHead += "##FORMAT=<ID=NKC,Number=1,Type=Float,Description=\"Coverage of node k-mers\">\n";
+            mVcfHead += "##FORMAT=<ID=CAK,Number=R,Type=Float,Description=\"Coverage of allele k-mers\">\n";
+            mVcfHead += "##FORMAT=<ID=UK,Number=1,Type=Integer,Description=\"Total number of unique kmers, capped at 255\">\n";
 
-            mVcfHead += line + "\t" + sampleName_ + "\n";  // Store VCF file comment line
+            mVcfHead += "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT";  // Store VCF file comment line
 
             uint16_t hapIdx = 1;  // haplotype index
             for (size_t i = 9; i < lineVec.size(); i++) {
-                for (size_t j = 0; j < vcfPloidy_; j++) {
+                for (size_t j = 0; j < mVcfPloidy; j++) {
                     mHapMap[hapIdx] = lineVec[i];  // assignment
                 
                     if (hapIdx < UINT16_MAX) {  // Determine whether the variable is out of bounds, currently only supports 65535 haplotypes
@@ -261,7 +266,6 @@ void ConstructIndex::construct()
             string qrySeq = lineVec[4];  // 4
             vector<string> qrySeqVec = split(qrySeq, ",");  // the vector of ALT
 
-            
             // FORMAT
             vector<string> formatVec = split(strip(lineVec[8], '\n'), ":");
             vector<string>::iterator gtItera = find(formatVec.begin(), formatVec.end(), "GT");
@@ -282,14 +286,25 @@ void ConstructIndex::construct()
                 qrySeqVec, 
                 gtIndex
             );
-            if (!inputGraphFileName_.empty()) {continue;};
 
             // Check if the chromosome is in the reference genome
-            auto mFastaMapFindIter = mFastaMap.find(chromosome);
-            if (mFastaMapFindIter == mFastaMap.end()) {
+            auto mFastaMapFindIter = mFastaSeqMap.find(chromosome);
+            if (mFastaMapFindIter == mFastaSeqMap.end()) {
                 cerr << "[" << __func__ << "::" << getTime() << "] " 
                     << "Error: no '" << chromosome << "' found in reference genome."<< endl;
                 exit(1);
+            }
+
+            // If it overlaps with the previous coordinate, skip it
+            if (chromosome != tmpChromosome) {
+                tmpRefStart = 0;
+            }
+            if (tmpRefStart == refStart) {
+                cerr << "[" << __func__ << "::" << getTime() << "] " << "Warning: multiple variants observed, skip this site -> " << chromosome << " " << refStart << endl;
+                continue;
+            } else if (tmpRefStart > refStart) {
+                cerr << "[" << __func__ << "::" << getTime() << "] " << "Warning: unsorted variants, skip this site -> " << chromosome << " " << tmpRefStart << ">" << refStart << endl;
+                continue;
             }
             
             // Check that the REF sequence is consistent
@@ -301,13 +316,10 @@ void ConstructIndex::construct()
                 refSeq = trueRefSeq;
             }
 
-            // Number of nodes
-            uint32_t nodeNum = mGraphMap.size();
-            
             // genotype=0
             // If the first vcf position of the chromosome is not 1, the first node is constructed from the sequence at the front of the genome
             uint16_t genotype = 0;
-            if (chromosome != tmpChromosome && refStart > 0) {
+            if (chromosome != tmpChromosome) {
                 // Add the first part of the new chromosome
                 string preRefSeq;
                 uint32_t preRefStart;
@@ -315,11 +327,11 @@ void ConstructIndex::construct()
                 uint32_t preRefLen;
                 
                 // Add the second half of the old chromosome
-                if (nodeNum >= 1 && tmpRefEnd < mFastaMap[tmpChromosome].length()) {  // See if the last mutation is at the end of the chromosome
+                if (tmpRefEnd > 0 && tmpRefEnd < mFastaSeqMap[tmpChromosome].length()) {  // See if the last variant is at the end of the chromosome
                     preRefStart = tmpRefEnd + 1;  // Previous starting position
-                    preRefEnd = mFastaMap[tmpChromosome].length();  // The last END position, the end of the chromosome
+                    preRefEnd = mFastaSeqMap[tmpChromosome].length();  // The last END position, the end of the chromosome
                     preRefLen = preRefEnd - preRefStart + 1;  // The length of the previous sequence
-                    preRefSeq = mFastaMap[tmpChromosome].substr(preRefStart-1, preRefLen);  // The sequence information of the last part of the previous chromosome
+                    preRefSeq = mFastaSeqMap[tmpChromosome].substr(preRefStart-1, preRefLen);  // The sequence information of the last part of the previous chromosome
 
                     // Variable Binding
                     nodeSrt& mGraphMapForChrForStart = mGraphMap[tmpChromosome][preRefStart];
@@ -328,17 +340,20 @@ void ConstructIndex::construct()
                     mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
                 }
 
-                // Add the first part of the new chromosome
-                preRefStart = 1;  // Initiation of the chromosome, 1
-                preRefEnd = refStart - 1;  // The first mutation in the previous position
-                preRefLen = preRefEnd - preRefStart + 1;  // length
-                preRefSeq = mFastaMapFindIter->second.substr(0, preRefLen);  // sequence
-                
-                // Variable Binding
-                nodeSrt& mGraphMapForChrForStart = mGraphMap[chromosome][preRefStart];
+                // If the starting position of the first variant of the new chromosome is greater than 1, it means that ref information needs to be added.
+                if (refStart > 1) {
+                    // Add the first part of the new chromosome
+                    preRefStart = 1;  // Initiation of the chromosome, 1
+                    preRefEnd = refStart - 1;  // The first variant in the previous position
+                    preRefLen = preRefEnd - preRefStart + 1;  // length
+                    preRefSeq = mFastaMapFindIter->second.substr(0, preRefLen);  // sequence
+                    
+                    // Variable Binding
+                    nodeSrt& mGraphMapForChrForStart = mGraphMap[chromosome][preRefStart];
 
-                mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
-                mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
+                    mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
+                    mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
+                }
             } else {  // Otherwise the node is built from the sequence in the middle of the vcf
                 string preRefSeq;
                 uint32_t preRefStart;
@@ -384,14 +399,14 @@ void ConstructIndex::construct()
                 vector<string> gtVec = construct_index::gt_split(split(lineVec[i], ":")[gtIndex]);  // The corresponding typing list of the strains
 
                 // Check if the vcfPloidy is consistent with the parameters
-                if (gtVec.size() > vcfPloidy_) {
+                if (gtVec.size() > mVcfPloidy) {
                     cerr << "[" << __func__ << "::" << getTime() << "] "
                         << "Warning: The number of haplotypes at " << chromosome << "(" << refStart << ") exceeds the specified parameter. Excess haplotypes are discarded." << endl;
-                    gtVec.resize(vcfPloidy_);
-                } else if (gtVec.size() < vcfPloidy_) {
+                    gtVec.resize(mVcfPloidy);
+                } else if (gtVec.size() < mVcfPloidy) {
                     cerr << "[" << __func__ << "::" << getTime() << "] "
                         << "Warning: The number of haplotypes at " << chromosome << "(" << refStart << ") is fewer than the specified parameter. Filling with zeros." << endl;
-                    while (gtVec.size() < vcfPloidy_) {
+                    while (gtVec.size() < mVcfPloidy) {
                         gtVec.push_back("0");
                     }
                 }
@@ -420,18 +435,20 @@ void ConstructIndex::construct()
                 }
             }
 
-            tmpRefEnd = refEnd;  // update coordinates
-            tmpChromosome = chromosome;  // update coordinates
+            // update coordinates
+            tmpRefStart = refStart;
+            tmpRefEnd = refEnd;
+            tmpChromosome = chromosome;
         }
     }
 
     // second half of the last chromosome
-    if (tmpRefEnd < mFastaMap[tmpChromosome].length()) {  // Determine whether the last mutation is at the end of the chromosome
+    if (tmpRefEnd < mFastaSeqMap[tmpChromosome].length()) {  // Determine whether the last variant is at the end of the chromosome
         uint32_t preRefStart = tmpRefEnd + 1;
-        uint32_t preRefEnd = mFastaMap[tmpChromosome].length();
+        uint32_t preRefEnd = mFastaSeqMap[tmpChromosome].length();
         uint32_t preRefLen = preRefEnd - preRefStart + 1;
 
-        string preRefSeq = mFastaMap[tmpChromosome].substr(preRefStart-1, preRefLen);
+        string preRefSeq = mFastaSeqMap[tmpChromosome].substr(preRefStart-1, preRefLen);
 
         // Variable Binding
         nodeSrt& mGraphMapForChrForStart = mGraphMap[tmpChromosome][preRefStart];
@@ -440,6 +457,7 @@ void ConstructIndex::construct()
         mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
     }
 
+    // number of variants
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Parsed " << mSnpNum + mIndelNum + mInsNum + mDelNum + mInvNum + mDupNum + mOtherNum << " alternative alleles ...\n\n";  // print log
     cerr << "           - " << "SNP: " << mSnpNum << endl;
     cerr << "           - " << "InDels: " << mIndelNum << endl;
@@ -450,6 +468,22 @@ void ConstructIndex::construct()
     cerr << "           - " << "Other: " << mOtherNum << endl << endl << endl;
 
     malloc_trim(0);	// 0 is for heap memory
+}
+
+
+/**
+ * @author zezhen du
+ * @date 2024/01/04
+ * @version v1.0
+ * @brief make mHapIdxQRmap
+ * 
+ * @return void
+**/
+void ConstructIndex::make_QRmap() {
+    // Quotient and remainder for each haplotype in topHapVec
+    for (uint16_t i = 0; i < mHapNum; i++) {
+        mHapIdxQRmap[i] = {DIVIDE_BY_8(i), GET_LOW_3_BITS(i)};
+    }
 }
 
 
@@ -514,7 +548,7 @@ void ConstructIndex::vcf_construct(
         string gtTxt = "";
         
         if (gtVec.empty()) {
-            for (size_t j = 0; j < vcfPloidy_; j++) {
+            for (size_t j = 0; j < mVcfPloidy; j++) {
                 if (j == 0) {
                     gtTxt += "0";
                 } else {
@@ -523,17 +557,17 @@ void ConstructIndex::vcf_construct(
             }
         } else {  // normal site
             // Check if the vcfPloidy is consistent with the parameters
-            if (gtVec.size() >= vcfPloidy_) {
-                for (size_t j = 0; j < vcfPloidy_; j++) {
+            if (gtVec.size() >= mVcfPloidy) {
+                for (size_t j = 0; j < mVcfPloidy; j++) {
                     if (j == 0) {
                         gtTxt += gtVec[j];
                     } else {
                         gtTxt += "|" + gtVec[j];
                     } 
                 }
-            } else if (gtVec.size() < vcfPloidy_) {
+            } else if (gtVec.size() < mVcfPloidy) {
                 gtTxt += join(gtVec, "|");
-                for (size_t j = 0; j < (vcfPloidy_ - gtVec.size()); j++) {
+                for (size_t j = 0; j < (mVcfPloidy - gtVec.size()); j++) {
                     gtTxt += "|0";
                 }
             }
@@ -566,6 +600,9 @@ void ConstructIndex::index()
     // init
     pool.init();
 
+    // Total number of tasks
+    uint64_t taskNum = 0;
+
     for(auto& [chromosome, startNodeMap] : mGraphMap) {  // map<chr, map<nodeStart, nodeSrt> >
         for(auto iter = startNodeMap.begin(); iter != startNodeMap.end(); iter++) {  // map<nodeStart, nodeSrt>
             if (iter->second.hapGtVec.size() == 1) {continue;}  // Skip the node if there is only one GT (0)
@@ -578,14 +615,20 @@ void ConstructIndex::index()
                     iter, 
                     ref(startNodeMap), 
                     ref(fastMode_), 
-                    ref(kmerLen_), 
+                    ref(mKmerLen), 
                     mbf, 
-                    ref(vcfPloidy_), 
-                    ref(debug_)
+                    ref(mVcfPloidy), 
+                    ref(mHapIdxQRmap)
                 )
             );
+
+            // number of tasks
+            taskNum++;
         }
     }
+
+    // Number of tasks processed
+    uint64_t taskProcessNum = 0;
 
     // Save multithreaded results to graph
     for (auto& futureResult : futureVec) {  // vector<future<{nodeIter, KmerHapBitMap, kmerHashFreMap}> >
@@ -611,18 +654,19 @@ void ConstructIndex::index()
                 emplacedValue.f++;
             } else {
                 auto& nodeBitVec = emplacedValue.BitVec;
+
                 for (uint64_t i = 0; i < BitVec.size(); i++) {
                     nodeBitVec[i] |= BitVec[i];
                 }
-                auto& value = emplacedValue;
-                if (value.f < UINT8_MAX) {
-                    value.f++;
+                
+                if (emplacedValue.f < UINT8_MAX) {
+                    emplacedValue.f++;
                 }
             }
         }
 
         // Record the frequencies of k-mer with frequencies≥2 in bf to the graph
-        for (const auto& [kmerHash, frequence] : kmerHashFreMap) {  // map<uint64_t, uint8_t>
+        for (const auto& [kmerHash, frequency] : kmerHashFreMap) {  // map<uint64_t, uint8_t>
             auto findIter = mGraphKmerHashHapStrMap.find(kmerHash);
             if (findIter == mGraphKmerHashHapStrMap.end()) {
                 cerr << "[" << __func__ << "::" << getTime() << "] " 
@@ -631,8 +675,16 @@ void ConstructIndex::index()
             }
             auto& f = findIter->second.f;
             if (f == 1) {
-                f += frequence - 1;
+                f += frequency - 1;
             }
+        }
+
+        // tasks processed
+        taskProcessNum++;
+
+        // Print log every 5% of tasks
+        if (taskProcessNum > 0 && taskProcessNum % (taskNum / 20) == 0) {
+            cerr << "[" << __func__ << "::" << getTime() << "] " << std::fixed << std::setprecision(0) << "Indexing progress: " << std::setw(3) <<  static_cast<double>(taskProcessNum) / taskNum * 100.0 << "%\n";
         }
     }
 
@@ -712,6 +764,50 @@ void ConstructIndex::save_index() {
     std::ofstream outFile(outputGraphFileName_, std::ios::binary);
 
     if (outFile.is_open()) {
+        /* -------------------------------------------------- mKmerLen and mVcfPloidy -------------------------------------------------- */
+        // Write the length of k-mer and mVcfPloidy
+        outFile.write(reinterpret_cast<const char*>(&mKmerLen), sizeof(uint32_t));
+        outFile.write(reinterpret_cast<const char*>(&mVcfPloidy), sizeof(uint32_t));
+
+        /* -------------------------------------------------- mVcfHead and mVcfInfoMap  -------------------------------------------------- */
+        // Write mVcfHead
+        uint32_t vcfHeadLength = mVcfHead.length();
+        outFile.write(reinterpret_cast<const char*>(&vcfHeadLength), sizeof(uint32_t));
+        outFile.write(mVcfHead.data(), vcfHeadLength);
+
+        // Write mVcfInfoMap
+        uint32_t mVcfInfoMapSize = mVcfInfoMap.size();
+        outFile.write(reinterpret_cast<const char*>(&mVcfInfoMapSize), sizeof(uint32_t));
+
+        for (const auto& chrInfo : mVcfInfoMap) {
+            const std::string& chrName = chrInfo.first;
+            uint32_t chrNameLength = chrName.length();
+            outFile.write(reinterpret_cast<const char*>(&chrNameLength), sizeof(uint32_t));
+            outFile.write(chrName.data(), chrNameLength);
+
+            // chromosome length
+            uint32_t chrLen = mFastaLenMap.at(chrName);
+            outFile.write(reinterpret_cast<const char*>(&chrLen), sizeof(uint32_t));
+
+            const std::map<uint32_t, std::vector<std::string> >& startVecMap = chrInfo.second;
+            uint32_t startVecMapSize = startVecMap.size();
+            outFile.write(reinterpret_cast<const char*>(&startVecMapSize), sizeof(uint32_t));
+
+            for (const auto& startVec : startVecMap) {
+                uint32_t start = startVec.first;
+                const std::vector<std::string>& infoVec = startVec.second;
+                uint32_t infoVecSize = infoVec.size();
+                outFile.write(reinterpret_cast<const char*>(&start), sizeof(uint32_t));
+                outFile.write(reinterpret_cast<const char*>(&infoVecSize), sizeof(uint32_t));
+
+                for (const auto& info : infoVec) {
+                    uint32_t infoLength = info.length();
+                    outFile.write(reinterpret_cast<const char*>(&infoLength), sizeof(uint32_t));
+                    outFile.write(info.data(), infoLength);
+                }
+            }
+        }
+
         /* -------------------------------------------------- mHapNum and mHapMap  -------------------------------------------------- */
         outFile.write(reinterpret_cast<const char*>(&mHapNum), sizeof(uint16_t));
 
@@ -737,7 +833,7 @@ void ConstructIndex::save_index() {
 
             uint32_t chrNameLength = chrName.length();
             outFile.write(reinterpret_cast<const char*>(&chrNameLength), sizeof(uint32_t));
-            outFile.write(chrName.c_str(), chrNameLength);
+            outFile.write(chrName.data(), chrNameLength);
             outFile.write(reinterpret_cast<const char*>(&numNodes), sizeof(uint32_t));
 
             for (const auto& nodeData : chrNodes.second) {  // map<nodeStart, nodeSrt>
@@ -814,6 +910,67 @@ void ConstructIndex::load_index() {
     std::ifstream inFile(inputGraphFileName_, std::ios::binary);
 
     if (inFile.is_open()) {
+        /* -------------------------------------------------- mKmerLen and mVcfPloidy -------------------------------------------------- */
+        // load the length of k-mer and mVcfPloidy
+        mKmerLen = 0;
+        inFile.read(reinterpret_cast<char*>(&mKmerLen), sizeof(uint32_t));
+        mVcfPloidy = 0;
+        inFile.read(reinterpret_cast<char*>(&mVcfPloidy), sizeof(uint32_t));
+
+        /* -------------------------------------------------- mVcfHead and mVcfInfoMap  -------------------------------------------------- */
+        // Clear the existing data
+        mVcfHead.clear();
+        mFastaLenMap.clear();
+        mVcfInfoMap.clear();
+
+        // Read mVcfHead
+        uint32_t vcfHeadLength;
+        inFile.read(reinterpret_cast<char*>(&vcfHeadLength), sizeof(uint32_t));
+        mVcfHead.resize(vcfHeadLength);
+        inFile.read(&mVcfHead[0], vcfHeadLength);
+
+        // Read mVcfInfoMap
+        uint32_t mVcfInfoMapSize;
+        inFile.read(reinterpret_cast<char*>(&mVcfInfoMapSize), sizeof(uint32_t));
+
+        for (uint32_t i = 0; i < mVcfInfoMapSize; ++i) {
+            uint32_t chrNameLength;
+            inFile.read(reinterpret_cast<char*>(&chrNameLength), sizeof(uint32_t));
+            std::string chrName;
+            chrName.resize(chrNameLength);
+            inFile.read(&chrName[0], chrNameLength);
+
+            // chromosome length
+            uint32_t chrLen;
+            inFile.read(reinterpret_cast<char*>(&chrLen), sizeof(uint32_t));
+            mFastaLenMap[chrName] = chrLen;
+            mGenomeSize += chrLen;
+
+            uint32_t startVecMapSize;
+            inFile.read(reinterpret_cast<char*>(&startVecMapSize), sizeof(uint32_t));
+
+            std::map<uint32_t, std::vector<std::string> > startVecMap;
+            for (uint32_t j = 0; j < startVecMapSize; ++j) {
+                uint32_t start;
+                inFile.read(reinterpret_cast<char*>(&start), sizeof(uint32_t));
+
+                uint32_t infoVecSize;
+                inFile.read(reinterpret_cast<char*>(&infoVecSize), sizeof(uint32_t));
+
+                std::vector<std::string> infoVec;
+                for (uint32_t k = 0; k < infoVecSize; ++k) {
+                    uint32_t infoLength;
+                    inFile.read(reinterpret_cast<char*>(&infoLength), sizeof(uint32_t));
+                    std::string info;
+                    info.resize(infoLength);
+                    inFile.read(&info[0], infoLength);
+                    infoVec.push_back(std::move(info));
+                }
+                startVecMap[start] = infoVec;
+            }
+            mVcfInfoMap[chrName] = startVecMap;
+        }
+
         /* -------------------------------------------------- mHapNum and mHapMap  -------------------------------------------------- */
         inFile.read(reinterpret_cast<char*>(&mHapNum), sizeof(uint16_t));
 
@@ -827,9 +984,9 @@ void ConstructIndex::load_index() {
             inFile.read(reinterpret_cast<char*>(&hapIdx), sizeof(uint16_t));
             inFile.read(reinterpret_cast<char*>(&hapNameLength), sizeof(uint32_t));
 
-            std::vector<char> hapNameBuffer(hapNameLength);
-            inFile.read(hapNameBuffer.data(), hapNameLength);
-            std::string hapName(hapNameBuffer.begin(), hapNameBuffer.end());
+            std::string hapName;
+            hapName.resize(hapNameLength);
+            inFile.read(&hapName[0], hapNameLength);
 
             // Add the haplotype to the map.
             mHapMap.emplace(hapIdx, std::move(hapName));
@@ -848,9 +1005,9 @@ void ConstructIndex::load_index() {
             uint32_t chrNameLength;
             inFile.read(reinterpret_cast<char*>(&chrNameLength), sizeof(uint32_t));
 
-            std::vector<char> chrNameBuffer(chrNameLength);
-            inFile.read(chrNameBuffer.data(), chrNameLength);
-            std::string chrName(chrNameBuffer.begin(), chrNameBuffer.end());
+            std::string chrName;
+            chrName.resize(chrNameLength);
+            inFile.read(&chrName[0], chrNameLength);
 
             uint32_t numNodes;
             inFile.read(reinterpret_cast<char*>(&numNodes), sizeof(uint32_t));
@@ -870,10 +1027,9 @@ void ConstructIndex::load_index() {
                     uint32_t seqLen;
                     inFile.read(reinterpret_cast<char*>(&seqLen), sizeof(uint32_t));
 
-                    std::vector<char> seqBuffer(seqLen);
-                    inFile.read(seqBuffer.data(), seqLen);
-                    std::string seq(seqBuffer.begin(), seqBuffer.end());
-
+                    std::string seq;
+                    seq.resize(seqLen);
+                    inFile.read(&seq[0], seqLen);
                     nodeSrtData.seqVec.push_back(seq);
                 }
 
@@ -941,7 +1097,7 @@ void ConstructIndex::load_index() {
 /**
  * @brief graph index for k-mer (threads)
  * 
- * @date 2023/09/01
+ * @date 2023/12/04
  * 
  * @param chromosome            mGraphMap output by construct��map<chr, map<start, nodeSrt> >
  * @param nodeIter              node iterator
@@ -950,7 +1106,7 @@ void ConstructIndex::load_index() {
  * @param kmerLen               the length of kmer
  * @param bf                    Kmer frequency in the reference genome: Counting Bloom Filter
  * @param vcfPloidy             ploidy of genotypes in VCF file
- * @param debug                 debug code
+ * @param hapIdxQRmap           map<hapIdx, tuple<quotient, remainder> >
  * 
  * @return {nodeIter, tmpKmerHapBitMap, kmerHashFreMap}     kmer: map<kmerHash, vector<int8_t> >
 **/
@@ -962,7 +1118,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
     const uint32_t& kmerLen, 
     BloomFilter* bf, 
     const uint32_t& vcfPloidy, 
-    const bool& debug
+    const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap
 ) {
     unordered_map<uint64_t, vector<int8_t> > KmerHapBitMap;  // kmer: map<kmerHash, vector<int8_t> >:  0000 0000, Each bits represents a haplotype, 0->False 1->True
 
@@ -971,22 +1127,12 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
     const auto& seqVec = nodeIter->second.seqVec;  // vector<seq>
     const auto& hapGtVec = nodeIter->second.hapGtVec;  // vector<gt>
 
-    // Quotient and remainder for each haplotype in topHapVec
-    unordered_map<uint16_t, tuple<uint16_t, uint16_t> > hapIdxQRmap;  // map<hapIdx, tuple<quotient, remainder> >
-
-    for (uint16_t i = 0; i < hapGtVec.size(); i++) {  // vector<gt>
-
-        hapIdxQRmap[i] = {DIVIDE_BY_8(i), GET_LOW_3_BITS(i)};
-    }
-
-
     uint16_t haplotype = 0;  // Index of the haplotype
-
+    
     for (const auto& gt : hapGtVec) {  // Iterate over the genotypes
         // fast mode
         // calculate whether the genotype of the corresponding sample is empty or zero. If it is, skip all its haplotypes
         if (fastMode && haplotype > 0 && gt == (uint16_t)0) {
-
             uint16_t groupIdx = (haplotype - 1) / vcfPloidy;
             uint16_t hapIdxL = groupIdx * vcfPloidy + 1;
             uint16_t hapIdxR = (groupIdx + 1) * vcfPloidy;
@@ -1004,12 +1150,13 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
             }
         }
         
-        // Check if the array is out of bounds
+        // Check if the array is out of range
         if (gt >= seqVec.size()) {
             cerr << "[" << __func__ << "::" << getTime() << "] "
-                << "Error: Node '"<< chromosome << "-" << nodeIter->first << "' does not contain sequence information for haplotype " << gt << "." << endl;
+                 << "Error: The node '" << chromosome << "-" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
             exit(1);
         }
+
         // Get ALT sequence
         string seqTmp = seqVec[gt];
 
@@ -1022,28 +1169,28 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
             nodeIter, 
             startNodeMap
         );
-        // if (debug && nodeIter->first == 4928) {
-        //     cerr << "nodeStart:" << nodeIter->first << " haplotype:" << haplotype << " gt:" << +gt << " up:" << upDownSeq.first << " this:" << seqTmp << " down:" << upDownSeq.second << endl;
-        // }
+        if (debugConstruct) {
+            cerr << "Node Start:" << nodeIter->first << ", Haplotype:" << haplotype << ", GT:" << +gt << ", Upstream:" << upDownSeq.first << ", Current:" << seqTmp << ", Downstream:" << upDownSeq.second << endl << endl;
+        }
         
         seqTmp = upDownSeq.first + seqTmp + upDownSeq.second;  // Add upstream and downstream sequences
-        
+
         // k-mer indexing
-        map<uint8_t, unordered_set<uint64_t> > freKmerHashSetMap;  // map<frequence, unordered_set<kmerHash> >
+        map<uint8_t, unordered_set<uint64_t> > freKmerHashSetMap;  // map<frequency, unordered_set<kmerHash> >
         kmerBit::kmer_sketch_construct(seqTmp, kmerLen, freKmerHashSetMap, bf);
 
         // Select the lowest frequency k-mer
-        map<uint8_t, unordered_set<uint64_t> > freKmerHashSetMapTmp;  // map<frequence, unordered_set<kmerHash> >
+        map<uint8_t, unordered_set<uint64_t> > freKmerHashSetMapTmp;  // map<frequency, unordered_set<kmerHash> >
         uint32_t kmerNum = 0;  // 2023/09/15 -> better for plant's genomes
-        for (const auto& [frequence, kmerHashSet] : freKmerHashSetMap) {
-            freKmerHashSetMapTmp.emplace(frequence, kmerHashSet);
+        for (const auto& [frequency, kmerHashSet] : freKmerHashSetMap) {
+            freKmerHashSetMapTmp.emplace(frequency, kmerHashSet);
             
             kmerNum += kmerHashSet.size();
 
             // Record k-mer with frequency ≥ 2
-            if (frequence >= 2) {
+            if (frequency >= 2) {
                 for (const auto& kmerHash : kmerHashSet) {
-                    kmerHashFreMap.emplace(kmerHash, frequence);
+                    kmerHashFreMap.emplace(kmerHash, frequency);
                 }
             }
             
@@ -1053,14 +1200,14 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
             }
         }
 
-        // clear memory
+        // clear memory (freKmerHashSetMap)
         map<uint8_t, unordered_set<uint64_t> >().swap(freKmerHashSetMap);
         
-        const uint16_t& quotient = get<0>(hapIdxQRmap[haplotype]);  // Variable to store the quotient
-        const uint16_t& remainder = get<1>(hapIdxQRmap[haplotype]);  // Get the remainder
+        const uint16_t& quotient = get<0>(hapIdxQRmap.at(haplotype));  // Variable to store the quotient
+        const uint16_t& remainder = get<1>(hapIdxQRmap.at(haplotype));  // Get the remainder
 
         // Add the kmerHash to the node's information
-        for (const auto& [frequence, kmerHashSet] : freKmerHashSetMapTmp) {  //  map<frequence, unorser_set<kmerHash> >
+        for (const auto& [frequency, kmerHashSet] : freKmerHashSetMapTmp) {  //  map<frequency, unorser_set<kmerHash> >
             for (const auto& kmerHash : kmerHashSet) {  // vector<kmerHash>
                 // Record the haplotype information of k-mer
                 auto emplacedValue = KmerHapBitMap.emplace(kmerHash, vector<int8_t>(DIVIDE_BY_8(hapGtVec.size()) + 1, 0)).first;
@@ -1076,11 +1223,14 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
             }
         }
 
+        // clear memory (freKmerHashSetMapTmp)
+        map<uint8_t, unordered_set<uint64_t> >().swap(freKmerHashSetMapTmp);
+
         // Haplotype index increment
         ++haplotype;
     }
 
-    return {nodeIter, KmerHapBitMap, kmerHashFreMap};
+    return {nodeIter, move(KmerHapBitMap), move(kmerHashFreMap)};
 }
 
 
@@ -1106,8 +1256,7 @@ pair<string, string> construct_index::find_node_up_down_seq(
     const uint32_t & seqLen,
     const map<uint32_t, nodeSrt>::iterator & nodeIter, 
     const map<uint32_t, nodeSrt> & startNodeMap
-)
-{
+) {
     // Upstream/Downstream sequence
     string upSeq;
     string downSeq;
@@ -1137,7 +1286,7 @@ pair<string, string> construct_index::find_node_up_down_seq(
         // Check if the array is out of bounds
         if (gt >= nodeTmp.seqVec.size()) {
             cerr << "[" << __func__ << "::" << getTime() << "] "
-                << "Error: sequence information not found -> " << nodeStartTmp << " GT:" << gt << endl;
+                 << "Error: The node '" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
             exit(1);
         }
         // Get ALT sequence
@@ -1222,7 +1371,11 @@ pair<string, string> construct_index::find_node_up_down_seq(
         // Update coordinates
         nodeStartVec.push_back(nodeStartTmp);
         nodeEndVec.push_back(nodeEndTmp);
-        
+
+        if (debugConstruct) {
+            cerr << "UP - Start:" << nodeStartTmp << ", GT:" << +gt << ", sequence:" << seqTmp << endl;
+        }
+
         int64_t remainingLen = seqLen - upSeq.size();
         if (seqTmp.size() >= remainingLen) {
             upSeq.insert(0, seqTmp.substr(seqTmp.size() - remainingLen, remainingLen));
@@ -1258,7 +1411,7 @@ pair<string, string> construct_index::find_node_up_down_seq(
         // Check if the array is out of bounds
         if (gt >= nodeTmp.seqVec.size()) {
             cerr << "[" << __func__ << "::" << getTime() << "] "
-                << "Error: sequence information not found -> " << nodeStartTmp << " GT:" << gt << endl;
+                 << "Error: The node '" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
             exit(1);
         }
         // Get ALT sequence
@@ -1344,6 +1497,10 @@ pair<string, string> construct_index::find_node_up_down_seq(
         // update coordinates
         nodeStartVec.push_back(nodeStartTmp);
         nodeEndVec.push_back(nodeEndTmp);
+
+        if (debugConstruct) {
+            cerr << "DOWN - Start:" << nodeStartTmp << ", GT:" << +gt << ", sequence:" << seqTmp << endl;
+        }
 
         int64_t remainingLen = seqLen - downSeq.size();
         if (seqTmp.size() >= remainingLen) {
@@ -1442,8 +1599,17 @@ vector<string> construct_index::gt_split(const string & gtTxt)
     } else if (gtTxt.find("|") != string::npos) {
         gtVecTmp = split(gtTxt, "|");
     } else {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "GT is not separated by '/' or '|': " << gtTxt << endl;
-        exit(1);
+        try {
+            cerr << "[" << __func__ << "::" << getTime() << "] " << "Warning: sample has only one genotype, attempting to correct to diploid -> " << gtTxt << endl;
+            stoul(gtTxt);
+            gtVecTmp.push_back(gtTxt);
+        } catch (const std::invalid_argument&) {
+            cerr << "[" << __func__ << "::" << getTime() << "] " << "Error: GT is not separated by '/' or '|' -> " << gtTxt << endl;
+            exit(1);
+        } catch (const std::out_of_range&) {
+            cerr << "[" << __func__ << "::" << getTime() << "] " << "Error: GT is not separated by '/' or '|' -> " << gtTxt << endl;
+            exit(1);
+        }
     }
 
     return gtVecTmp;

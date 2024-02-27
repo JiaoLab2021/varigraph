@@ -37,7 +37,7 @@ private:
 
     std::mutex mtx;
 
-    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap_;  // // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
+    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap_;  // // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVecP>
 
 public:
     uint64_t mReadBase = 0;  //Sequencing file size
@@ -48,7 +48,7 @@ public:
      * @version v1.0
 	 * @brief building the kmer index of sequencing read
      * 
-     * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
+     * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVecP>
      * @param fastqFileNameVec       the vector of sequencing read
      * @param kmerLen                the length of k-mer
      * @param threads                threads
@@ -80,13 +80,11 @@ public:
 	 * @brief building the kmer index of sequencing read
      * 
      * @param fastqFileName       sequencing read
-     * @param ReadBase            Sequencing file size
      * 
      * @return void
 	**/
     void fastq_file_open(
-        const string & fastqFileName, 
-        uint64_t& ReadBase
+        const string & fastqFileName
     );
 
 
@@ -138,7 +136,7 @@ namespace fastq_kmer
     vector<uint64_t> fastq_file_open_run(
         vector<string> sequenceVec, 
         uint32_t kmerLen, 
-        const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
+        const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMapP
     );
 }
 

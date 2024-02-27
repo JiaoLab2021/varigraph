@@ -40,7 +40,7 @@ namespace kmerBit{
 	 *                                  a[i].x = kMer<<8 | kmerSpan
 	 * @param bf                        Frequency of kmers in the reference genome, Counting Bloom Filter
 	**/
-	void kmer_sketch_construct(string str, uint32_t k, map<uint8_t, unordered_set<uint64_t> >& freKmerHashSetMap, BloomFilter* bf);
+	void kmer_sketch_construct(string& str, uint32_t k, map<uint8_t, unordered_set<uint64_t> >& freKmerHashSetMap, BloomFilter* bf);
 	
 
 	/**

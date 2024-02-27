@@ -80,14 +80,14 @@ struct HMMScore {
 // posterior
 struct posteriorStr
 {
-    long double probability;  // Posterior probability
+    long double probability;  // Posterior probability, GPP
     vector<uint16_t> hapVec;  // haplotype information
-    vector<uint64_t> kmerNumVec;  // The number of k-mers corresponding to the haplotype
-    vector<float> kmerAveCovVec;  // The k-mer average depth corresponding to the haplotype
+    vector<uint64_t> kmerNumVec;  // The number of k-mers corresponding to the haplotype, NAK
+    vector<float> kmerAveCovVec;  // The k-mer average depth corresponding to the haplotype, CAK
 
-    float NodeKmerAveCov;  // Node k-mer average depth
+    uint8_t uniqueKmerNum;  // Number of node-unique k-mers, UK
 
-    posteriorStr() : probability(0.0), NodeKmerAveCov(0.0) {}
+    posteriorStr() : probability(0.0), uniqueKmerNum(0) {}
 };
 
 
@@ -97,7 +97,7 @@ struct nodeSrt {
     vector<uint16_t> hapGtVec;  // Genotype information for each haplotype at this locus: vector<GT>
 
     vector<uint64_t> kmerHashVec;  // All k-mer hashes in the node, vector<kmerHash>
-    vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator> GraphKmerHashHapStrMapIterVec;  // Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
+    vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator> GraphKmerHashHapStrMapIterVec;  // Iterator pointing to mGraphKmerHashHapStrMapP, vector<iter>
     
     vector<HMMScore> HMMScoreVec;  // store all alpha and betas scores of nodes
 
@@ -112,33 +112,25 @@ private:
     string refFileName_;
     string vcfFileName_;
 
-    const string& inputMbfFileName_;  // Load Counting Bloom Filter index from file
     const string& inputGraphFileName_;  // load the Genome Geaph from disk
-
-    const string& outputMbfFileName_;  // Save Counting Bloom Filter index to file
     const string& outputGraphFileName_;  // save the Genome Geaph to disk
 
     bool fastMode_;
-
-    uint32_t kmerLen_;
-
-    string sampleName_;
-
-    uint32_t vcfPloidy_;
-
-    bool debug_;
 
     uint32_t threads_;
 
 public:
     map<string, map<uint32_t, nodeSrt> > mGraphMap;  // Store the sequence and k-mer information of the graph: map<chr, map<nodeStart, nodeSrt> >
-    unordered_map<uint64_t, kmerCovFreBitVec> mGraphKmerHashHapStrMap;  // Record the coverage and frequency of all k-mers in the graph: map<kmerHash,kmerCovFreBitVec>
+    unordered_map<uint64_t, kmerCovFreBitVec> mGraphKmerHashHapStrMap;  // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
 
     map<uint16_t, string> mHapMap;  // Store haplotype information: map<hapIdx, hapName>
     uint16_t mHapNum;
 
     string mVcfHead;  // Store VCF file comment lines
-    map<string, map<uint32_t, vector<string> > > mVcfInfoMap;  // Store VCF file information
+    map<string, map<uint32_t, vector<string> > > mVcfInfoMap;  // Store VCF file information, map<chromosome, map<start, vector> >
+    
+    uint32_t mKmerLen;
+    uint32_t mVcfPloidy;
 
     // number
     uint32_t mSnpNum = 0;
@@ -149,21 +141,21 @@ public:
     uint32_t mDupNum = 0;
     uint32_t mOtherNum = 0;
 
-    unordered_map<string, string> mFastaMap;  // map<chromosome, sequence>
+    unordered_map<string, string> mFastaSeqMap;  // map<chromosome, sequence>
+    unordered_map<string, uint32_t> mFastaLenMap;  // map<chromosome, sequence length>
     uint64_t mGenomeSize = 0;  // Reference genome size
 
     BloomFilter* mbf;  // The Counting Bloom filter of reference genome's k-mers informations
 
+    unordered_map<uint16_t, tuple<uint16_t, uint16_t> > mHapIdxQRmap;  // map<hapIdx, tuple<quotient, remainder> >
+
     ConstructIndex(
         const string& refFileName, 
         const string& vcfFileName, 
-        const string& inputMbfFileName, 
         const string& inputGraphFileName, 
-        const string& outputMbfFileName, 
         const string& outputGraphFileName, 
         const bool& fastMode, 
         const uint32_t& kmerLen, 
-        const string& sampleNameName, 
         const uint32_t& vcfPloidy, 
         const bool& debug, 
         const uint32_t& threads
@@ -221,6 +213,16 @@ public:
      * @return void
 	**/
     void construct();
+
+    /**
+     * @author zezhen du
+     * @date 2024/01/04
+     * @version v1.0
+     * @brief make mHapIdxQRmap
+     * 
+     * @return void
+    **/
+    void make_QRmap();
 
 
     /**
@@ -373,7 +375,7 @@ namespace construct_index
      * @param kmerLen               the length of kmer
      * @param bf                    Kmer frequency in the reference genome: Counting Bloom Filter
      * @param vcfPloidy             ploidy of genotypes in VCF file
-     * @param debug                 debug code
+     * @param hapIdxQRmap           map<hapIdx, tuple<quotient, remainder> >
      * 
      * @return {nodeIter, tmpKmerHapBitMap, kmerHashFreMap}     kmer: map<kmerHash, vector<int8_t> >
     **/
@@ -385,7 +387,7 @@ namespace construct_index
         const uint32_t& kmerLen, 
         BloomFilter* bf, 
         const uint32_t& vcfPloidy, 
-        const bool& debug
+        const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap
     );
 
 

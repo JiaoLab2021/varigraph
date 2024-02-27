@@ -13,36 +13,48 @@ std::mutex mtxG;
 
 /**
  * @author zezhen du
- * @date 2023/09/22
+ * @date 2023/12/04
  * @version v1.0.1
  * @brief genotype
  * 
+ * @param mFastaLenMap           chromosome length
  * @param GraphMap               output of construct_index: map<string, map<uint32_t, nodeSrt>>
  * @param hapMap                 Contains all haplotypes
  * @param vcfHead                the VCF file comment lines
  * @param vcfInfoMap             VCF information
- * @param genomeType             specify the genotype of the reference genome (homozygous/heterozygous)
- * @param refPloidy              genome ploidy
- * @param ReadDepth              sequencing data depth
+ * @param hapIdxQRmap            map<hapIdx, tuple<quotient, remainder> >
+ * @param sampleType             specify the genotype of the reference genome (hom/het)
+ * @param samplePloidy           sample ploidy
+ * @param hapKmerCoverage        haplotype k-mer coverage
+ * @param sampleName             sample name
  * @param outputFileName         output filename
  * @param kmerLen
  * @param haploidNum             the haploid number for genotyping
+ * @param chrLenThread           Chromosome granularity
+ * @param transitionProType      transition probability type
+ * @param svGenotypeBool         structural variation genotyping only
  * @param threads
  * @param debug
  * 
  * @return 0
 **/
 int GENOTYPE::genotype(
+    const unordered_map<string, uint32_t> & mFastaLenMap, 
     map<string, map<uint32_t, nodeSrt> > & GraphMap, 
     const map<uint16_t, string> & hapMap, 
     const string& vcfHead, 
     map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
-    const string& genomeType, 
-    const uint32_t& refPloidy, 
-    const float& ReadDepth, 
+    const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap, 
+    const string& sampleType, 
+    const uint32_t& samplePloidy, 
+    const float& hapKmerCoverage, 
+    const string& sampleName, 
     const string & outputFileName, 
-    uint32_t kmerLen, 
+    const uint32_t kmerLen, 
     uint32_t haploidNum, 
+    uint32_t chrLenThread, 
+    const string& transitionProType, 
+    const bool& svGenotypeBool, 
     uint32_t threads, 
     const bool & debug
 ) {
@@ -50,9 +62,7 @@ int GENOTYPE::genotype(
 
     // debug
     debugGenotype = debug;
-    if (debugGenotype) {
-        threads = 1;
-    }
+    if (debugGenotype) threads = 1;
 
     // Thread Pool
     ThreadPool pool(threads);
@@ -68,11 +78,46 @@ int GENOTYPE::genotype(
     haploidNum = min(haploidNum, static_cast<uint32_t>(hapMap.size()));  // We need more haplotypes for genotyping than are present in the VCF file, so we will use the number of haplotypes from the VCF file instead.
 
     for (auto iter1 = GraphMap.begin(); iter1 != GraphMap.end(); iter1++) {  // map<string, map<uint32_t, nodeSrt> >: map<chr, map<nodeStart, nodeSrt> >
-        // Number of elements processed by each thread
-        uint32_t elementsPerThread = iter1->second.size() / threads;
-        for (int i = 0; i < threads; ++i) {
-            uint32_t threadStart = i * elementsPerThread;
-            uint32_t threadEnd = (i == threads - 1) ? iter1->second.size() - 1 : (threadStart + elementsPerThread - 1);
+        // The number of nodes of this chromosome
+        uint64_t chrNodeNum = iter1->second.size();
+
+        // chromosome length
+        string chromosome = iter1->first;
+        uint32_t chrLen;
+
+       auto findIter = mFastaLenMap.find(chromosome);  // chromosome length
+
+        // Check if the chromosome is present in the reference genome
+        if (findIter == mFastaLenMap.end()) {  // if not
+            cerr << "[" << __func__ << "::" << getTime() << "] " 
+                << "'" << chromosome << "' does not exist in the reference genome." << endl;
+            exit(1);
+        } else {  // yes
+            chrLen = findIter->second;  // chromosome length
+        }
+
+        chrLenThread = min(chrLenThread, chrLen);  // Prevent chromosome granularity from being larger than chromosome length
+
+        uint32_t stepsNumber = ceil(double(chrLen)/chrLenThread);  // Step count
+
+        // End position of thread
+        uint32_t threadEndTmp = 0;
+
+        // Submit tasks in a loop
+        for (uint32_t i = 0; i < stepsNumber; i++) {
+            uint32_t stepEnd = (i + 1) * chrLenThread;
+
+            // End position of previous window
+            uint32_t threadStart = threadEndTmp;
+            
+            if (threadStart >= chrNodeNum) break;  // Reach the end of the node of the chromosome and jump out of the loop
+
+            auto threadEndIterTmp = std::next(iter1->second.begin(), threadStart);
+            for (map<uint32_t, nodeSrt>::iterator iter2 = threadEndIterTmp; iter2 != iter1->second.end(); iter2++) {  // map<nodeStart, nodeSrt>
+                if (iter2->first > stepEnd) break;
+                threadEndTmp++;
+            }
+            uint32_t threadEnd = threadEndTmp;
 
             // Submit and save results in multiple threads
             futureOutVec.push_back(
@@ -80,27 +125,29 @@ int GENOTYPE::genotype(
                     for_bac_post_run, 
                     iter1, 
                     ref(hapMap), 
-                    ref(genomeType), 
-                    ref(refPloidy), 
-                    ref(ReadDepth),
+                    ref(sampleType), 
+                    ref(samplePloidy), 
+                    ref(hapKmerCoverage), 
+                    ref(hapIdxQRmap), 
                     threadStart, 
                     threadEnd, 
-                    kmerLen, 
-                    haploidNum
+                    ref(kmerLen), 
+                    ref(haploidNum), 
+                    ref(transitionProType), 
+                    ref(svGenotypeBool),
+                    ref(vcfInfoMap)
                 )
             );
         }
     }
 
-    // To obtain the return value of function
-    if (futureOutVec.size() >= 0) {
-        for (size_t i = 0; i < futureOutVec.size(); i++) {
-            int result = move(futureOutVec[i].get());
-        }
-
-        // empty vector
-        futureOutVec.clear();
+    // Obtain the return value of function
+    for (auto& futureOut : futureOutVec) {
+        int result = move(futureOut.get());
     }
+
+    // empty vector
+    futureOutVec.clear();
 
     malloc_trim(0); // 0 is for heap memory
 
@@ -110,58 +157,75 @@ int GENOTYPE::genotype(
     cerr << endl << endl;
 
     // save
-    GENOTYPE::save(GraphMap, vcfHead, vcfInfoMap, outputFileName);
+    GENOTYPE::save(GraphMap, vcfHead, vcfInfoMap, sampleName, outputFileName);
 
     return 0;
 }
 
 /**
  * @author zezhen du
- * @date 2023/09/22
+ * @date 2023/12/04
  * @version v1.0.1
  * @brief forward/backward run
  * 
- * @param startNodeIter       node iterator
- * @param hapMap              haplotype information
- * @param genomeType          specify the genotype of the reference genome (homozygous/heterozygous)
- * @param refPloidy           genome ploidy
- * @param ReadDepth           sequencing data depth
- * @param threadStart         iterator start position
- * @param threadEnd           iterator end position
+ * @param startNodeIter        node iterator
+ * @param hapMap               haplotype information
+ * @param sampleType           specify the genotype of the sample genome (hom/het)
+ * @param samplePloidy         sample ploidy
+ * @param hapKmerCoverage      haplotype k-mer coverage
+ * @param hapIdxQRmap          map<hapIdx, tuple<quotient, remainder> >
+ * @param threadStart          iterator start position
+ * @param threadEnd            iterator end position
  * @param kmerLen
- * @param haploidNum          the haploid number for genotyping
+ * @param haploidNum           the haploid number for genotyping
+ * @param transitionProType    transition probability type
+ * @param svGenotypeBool       structural variation genotyping only
+ * @param vcfInfoMap           VCF information, map<chromosome, map<start, vector> >
  * 
  * @return 0
 **/
 int GENOTYPE::for_bac_post_run( 
     map<string, map<uint32_t, nodeSrt> >::iterator startNodeIter, 
     const map<uint16_t, string> & hapMap, 
-    const string& genomeType, 
-    const uint32_t& refPloidy, 
-    const float& ReadDepth,
+    const string& sampleType, 
+    const uint32_t& samplePloidy, 
+    const float& hapKmerCoverage, 
+    const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap, 
     uint32_t threadStart, 
     uint32_t threadEnd, 
-    uint32_t kmerLen, 
-    uint32_t haploidNum
+    const uint32_t& kmerLen, 
+    const uint32_t& haploidNum, 
+    const string& transitionProType, 
+    const bool& svGenotypeBool, 
+    const map<string, map<uint32_t, vector<string> > >& vcfInfoMap
 )
 {
     string chromosome = startNodeIter->first;  // chromosome
 
+    // Check if the chromosome is present in the VCF file
+    auto findIter1 = vcfInfoMap.find(chromosome);
+    if (findIter1 == vcfInfoMap.end()) {  // if not
+        cerr << "[" << __func__ << "::" << getTime() << "] " 
+            << "'" << chromosome << "' does not exist in the VCF file." << endl;
+        exit(1);
+    }
+
+
     // Get the forward/backward iterator
     auto newStartNodeIterL = std::next(startNodeIter->second.begin(), threadStart);
-    auto newStartNodeIterR = std::next(startNodeIter->second.begin(), threadEnd + 1);
+    auto newStartNodeIterR = std::next(startNodeIter->second.begin(), threadEnd);
     
     // Check if the iterator is out of range
     if (newStartNodeIterL == startNodeIter->second.end()) {
         cerr << "[" << __func__ << "::" << getTime() << "] "
-            << "Warning: the start iterator is pointing to the end. Please check the code -> " << chromosome << endl;
+            << "Warning: the start iterator is pointing to the end -> " << chromosome << endl;
         return 0;
     }
 
+
     /* ************************************************** Haplotype selection ************************************************** */
     vector<uint16_t> topHapVec;  // Haplotypes screened by Dirichlet distribution
-    // The Average coverage of k-mers
-    float aveKmerCoverage;
+    unordered_map<uint16_t, double> hapIdxScoreMap;  // Likelihood of haplotype occurrence: map<hapIdx, possibility>
     haplotype_selection(
         chromosome, 
         newStartNodeIterL, 
@@ -169,10 +233,11 @@ int GENOTYPE::for_bac_post_run(
         hapMap, 
         haploidNum, 
         topHapVec, 
-        aveKmerCoverage
+        hapIdxScoreMap
     );
     // Sort topHapVec in ascending order
     std::sort(topHapVec.begin(), topHapVec.end());
+
 
     /* ************************************************** 95% confidence interval for average coverage ************************************************** */
     /*
@@ -181,10 +246,12 @@ int GENOTYPE::for_bac_post_run(
     */
     double lower = 256.0f;
     double upper = -0.1f;
-    GENOTYPE::calculate_poisson_interval(aveKmerCoverage, lower, upper);
+    GENOTYPE::calculate_poisson_interval(hapKmerCoverage, lower, upper);
+
 
     /* ************************************************** forward ************************************************** */
     vector<HMMScore> preHMMScoreVec;  // Result of previous node forward/backward algorithm
+    uint32_t preNodeStart = 0;  // The start position of the previous node
     uint32_t preNodeEnd = 0;  // The ending position of the previous node
     // forward
     for (map<uint32_t, nodeSrt>::iterator iter1 = newStartNodeIterL; iter1 != newStartNodeIterR; iter1++) {  // map<nodeStart, nodeSrt>
@@ -193,32 +260,40 @@ int GENOTYPE::for_bac_post_run(
 
         if (iter1->second.hapGtVec.size() == 1) {continue;}  // If only 0, skip the node
 
-        // The anerave coverage and vector of node k-mers
-        float NodeAveKmerCoverage;
+        // Check if only structural variants are genotyped
+        if (svGenotypeBool) {
+            auto findIter2 = findIter1->second.find(nodeStart);
+            // Check if the chromosome is present in the VCF file
+            if (findIter2 == findIter1->second.end()) {  // if not
+                cerr << "[" << __func__ << "::" << getTime() << "] " 
+                    << "'" << chromosome << ":" << nodeStart << "' does not exist in the VCF file." << endl;
+                exit(1);
+            }
+
+            // Determine whether the length of REF or ALT is greater than 50
+            if (findIter2->second[3].size() < 50 && findIter2->second[4].size() < 50) {
+                continue;
+            }
+        }
 
         // hidden state
         vector<HHS> HHSStrVec = GENOTYPE::hidden_states(
-            genomeType, 
-            refPloidy, 
+            sampleType, 
+            samplePloidy, 
             chromosome, 
             nodeStart, 
             startNodeIter, 
             iter1->second, 
             topHapVec, 
-            NodeAveKmerCoverage, 
+            hapIdxQRmap, 
             lower, 
             upper, 
             kmerLen, 
             true
         );
 
-        // If the average depth <= lower, then use the average value calculated by this thread.
-        // 09/06
-        if (genomeType == "heterozygous") {
-            NodeAveKmerCoverage = ReadDepth;
-        } else if (NodeAveKmerCoverage <= lower) {
-            NodeAveKmerCoverage = aveKmerCoverage;
-        }
+        // The anerave coverage and vector of node k-mers, 2023/12/04
+        float NodeAveKmerCoverage = hapKmerCoverage;
 
         if (debugGenotype) {
             cerr << "start:" << nodeStart << endl;
@@ -237,19 +312,22 @@ int GENOTYPE::for_bac_post_run(
         }
 
         // transition probability
-        uint32_t nodeDistence = nodeStart - preNodeEnd;  // The distance from the previous node
-        long double recombProb, noRecombProb;  // Probability of recombination and non-recombination
-        tie(recombProb, noRecombProb) = transition_probabilities(
-            nodeDistence, 
-            hapMap
-        );
+        long double recombProb = 0.0L;  // Probability of recombination 
+        long double noRecombProb = 0.0L;  // Probability of non-recombination
+        // Determine transition probability type
+        if (transitionProType == "rec") {
+            uint32_t nodeDistence = nodeStart - preNodeEnd;  // The distance from the previous node
+            tie(recombProb, noRecombProb) = transition_probabilities(
+                nodeDistence, 
+                hapMap
+            );
+        }
 
         // observation matrix
         GENOTYPE::observable_states(
             NodeAveKmerCoverage, 
             HHSStrVec, 
-            iter1->second, 
-            refPloidy
+            iter1->second
         );
 
         if (debugGenotype) {
@@ -268,6 +346,7 @@ int GENOTYPE::for_bac_post_run(
         auto& HMMScoreVecTmp = startNodeIter->second.at(nodeStart).HMMScoreVec;
         forward(
             preHMMScoreVec, 
+            hapIdxScoreMap, 
             recombProb, 
             noRecombProb, 
             HHSStrVec, 
@@ -290,6 +369,7 @@ int GENOTYPE::for_bac_post_run(
         }
 
         // Reset the information of the previous node
+        preNodeStart = nodeStart;
         preNodeEnd = nodeEnd;
         preHMMScoreVec = HMMScoreVecTmp;
     }
@@ -298,6 +378,7 @@ int GENOTYPE::for_bac_post_run(
     /* ************************************************** backward ************************************************** */
     // variable zeroing
     vector<HMMScore>().swap(preHMMScoreVec);  // Result of previous node forward/backward algorithm
+    preNodeStart = 0;  // The start position of the previous node
     preNodeEnd = 0;  // The ending position of the previous node
     for (std::map<uint32_t, nodeSrt>::reverse_iterator iter1 = std::map<uint32_t, nodeSrt>::reverse_iterator(newStartNodeIterR); iter1 != std::map<uint32_t, nodeSrt>::reverse_iterator(newStartNodeIterL); ++iter1) {
         uint32_t nodeStart = iter1->first;  // the starting position of the node
@@ -305,48 +386,58 @@ int GENOTYPE::for_bac_post_run(
 
         if (iter1->second.hapGtVec.size() == 1) {continue;}  // If only 0, skip the node
 
-        // The anerave coverage and vector of node k-mers
-        float NodeAveKmerCoverage;
+        // Check if only structural variants are genotyped
+        if (svGenotypeBool) {
+            auto findIter2 = findIter1->second.find(nodeStart);
+            // Check if the chromosome is present in the VCF file
+            if (findIter2 == findIter1->second.end()) {  // if not
+                cerr << "[" << __func__ << "::" << getTime() << "] " 
+                    << "'" << chromosome << ":" << nodeStart << "' does not exist in the VCF file." << endl;
+                exit(1);
+            }
+
+            // Determine whether the length of REF or ALT is greater than 50
+            if (findIter2->second[3].size() < 50 && findIter2->second[4].size() < 50) {
+                continue;
+            }
+        }
 
         // hidden state
         vector<HHS> HHSStrVec = GENOTYPE::hidden_states(
-            genomeType, 
-            refPloidy, 
+            sampleType, 
+            samplePloidy, 
             chromosome, 
             nodeStart, 
             startNodeIter, 
             iter1->second, 
             topHapVec, 
-            NodeAveKmerCoverage, 
+            hapIdxQRmap, 
             lower, 
             upper, 
             kmerLen, 
             false
         );
 
-        // If the average depth <= lower, then use the average value calculated by this thread.
-        // 09/06
-        if (genomeType == "heterozygous") {
-            NodeAveKmerCoverage = ReadDepth;
-        } else if (NodeAveKmerCoverage <= lower) {
-            NodeAveKmerCoverage = aveKmerCoverage;
-        }
+        // The anerave coverage and vector of node k-mers, 2023/12/04
+        float NodeAveKmerCoverage = hapKmerCoverage;
 
         // transition probability
-        uint32_t nodeDistence = preNodeEnd - nodeStart;  // The distance from the previous node
-        long double recombProb, noRecombProb;  // Probability of recombination and non-recombination
-        tie(recombProb, noRecombProb) = transition_probabilities(
-            nodeDistence, 
-            hapMap
-        );
-
-
+        long double recombProb = 0.0L;  // Probability of recombination 
+        long double noRecombProb = 0.0L;  // Probability of non-recombination
+        // Determine transition probability type
+        if (transitionProType == "rec") {
+            uint32_t nodeDistence = preNodeStart - nodeEnd;  // The distance from the previous node
+            tie(recombProb, noRecombProb) = transition_probabilities(
+                nodeDistence, 
+                hapMap
+            );
+        }
+        
         // observation matrix
         GENOTYPE::observable_states(
             NodeAveKmerCoverage, 
             HHSStrVec, 
-            iter1->second, 
-            refPloidy
+            iter1->second
         );
 
 
@@ -354,6 +445,7 @@ int GENOTYPE::for_bac_post_run(
         auto& HMMScoreVecTmp = startNodeIter->second.at(nodeStart).HMMScoreVec;
         backward(
             preHMMScoreVec, 
+            hapIdxScoreMap, 
             recombProb, 
             noRecombProb, 
             HHSStrVec, 
@@ -375,6 +467,7 @@ int GENOTYPE::for_bac_post_run(
         }
 
         // Reset the information of the previous node
+        preNodeStart = nodeStart;
         preNodeEnd = nodeEnd;
         preHMMScoreVec = HMMScoreVecTmp;
     }
@@ -382,6 +475,22 @@ int GENOTYPE::for_bac_post_run(
     /* ************************************************** posterior ************************************************** */
     for (map<uint32_t, nodeSrt>::iterator iter1 = newStartNodeIterL; iter1 != newStartNodeIterR; iter1++) {  // map<nodeStart, nodeSrt>
         if (iter1->second.hapGtVec.size() == 1) {continue;}  // If only 0, skip the node
+
+        // Check if only structural variants are genotyped
+        if (svGenotypeBool) {
+            auto findIter2 = findIter1->second.find(iter1->first);
+            // Check if the chromosome is present in the VCF file
+            if (findIter2 == findIter1->second.end()) {  // if not
+                cerr << "[" << __func__ << "::" << getTime() << "] " 
+                    << "'" << chromosome << ":" << iter1->first << "' does not exist in the VCF file." << endl;
+                exit(1);
+            }
+
+            // Determine whether the length of REF or ALT is greater than 50
+            if (findIter2->second[3].size() < 50 && findIter2->second[4].size() < 50) {
+                continue;
+            }
+        }
 
         // Calculate and store the result in a local variable
         posterior(iter1->first, &(iter1->second), topHapVec);
@@ -393,7 +502,7 @@ int GENOTYPE::for_bac_post_run(
 
 /**
  * @author zezhen du
- * @date 2023/09/22
+ * @date 2023/12/13
  * @version v1.0
  * @brief haplotype selection
  * 
@@ -403,7 +512,7 @@ int GENOTYPE::for_bac_post_run(
  * @param hapMap                haplotype information
  * @param haploidNum            the haploid number for genotyping
  * @param topHapVec             Haplotype index for final screening in this block
- * @param aveKmerCoverage       the average k-mers coverage
+ * @param hapIdxScoreMap        Likelihood of haplotype occurrence: map<hapIdx, possibility>
  * 
  * @return void
 **/
@@ -411,17 +520,13 @@ void GENOTYPE::haplotype_selection(
     const string& chromosome, 
     const map<uint32_t, nodeSrt>::iterator& newStartNodeIterL, 
     const map<uint32_t, nodeSrt>::iterator& newStartNodeIterR, 
-    const map<uint16_t, string> & hapMap, 
-    uint32_t haploidNum, 
+    const map<uint16_t, string>& hapMap, 
+    const uint32_t haploidNum, 
     vector<uint16_t>& topHapVec, 
-    float & aveKmerCoverage
+    unordered_map<uint16_t, double>& hapIdxScoreMap
 )
 {
-    // cal_kmer_ave_cov
-    uint64_t kmerNum = 0;
-    uint64_t kmerCovSum = 0;
-
-    // If the number of haplotypes is less than haploidNum, skip directly
+    // If the number of haplotypes is less than haploidNum, skip screening
     if (hapMap.size() <= haploidNum) {
         for (const auto& pair : hapMap) {
             topHapVec.push_back(pair.first);
@@ -445,47 +550,39 @@ void GENOTYPE::haplotype_selection(
             // if it is 0, skip the k-mer
             // if (kmerCov == 0 || kmerFre > 1) {continue;}
             if (kmerCov <= 1 || kmerFre > 1) {continue;}  // 2023/09/27
-
-            kmerNum++;
-            kmerCovSum += kmerCov;
             
             //  record the k-mer frequency of each haplotype
-            if (topHapVec.empty()) {
-                // haplotype information
-                vector<bitset<8> > bitsVector;
-                for (const auto& hapBit : GraphKmerHashHapStrMapIter->second.BitVec) {
-                    bitsVector.push_back(hapBit);
-                }
-                
-                // haplotype
-                for (const auto& [hapIdx, _] : hapMap) {  // map<hapIdx, hapName>
+            // haplotype information
+            vector<bitset<8> > bitsVector;
+            for (const auto& hapBit : GraphKmerHashHapStrMapIter->second.BitVec) {
+                bitsVector.push_back(hapBit);
+            }
+            
+            // haplotype
+            for (const auto& [hapIdx, _] : hapMap) {  // map<hapIdx, hapName>
 
-                    uint16_t quotient1 = DIVIDE_BY_8(hapIdx);  // Quotient
-                    uint16_t remainder1 = GET_LOW_3_BITS(hapIdx);  // get remainder
+                uint16_t quotient1 = DIVIDE_BY_8(hapIdx);  // Quotient
+                uint16_t remainder1 = GET_LOW_3_BITS(hapIdx);  // get remainder
 
-                    // If the haplotype contains the k-mer then add the coverage of the k-mer
-                    if (bitsVector[quotient1][remainder1]) {
-                        hapKmerCountVec[hapIdx] += kmerCov;
-                    }
+                // If the haplotype contains the k-mer then add the coverage of the k-mer
+                if (bitsVector[quotient1][remainder1]) {
+                    hapKmerCountVec[hapIdx] += kmerCov;
                 }
             }
         }
     }
 
-    // Average k-mer coverage
-    aveKmerCoverage = (kmerNum > 0) ? static_cast<float>(kmerCovSum) / kmerNum : 0.0f;
-
     // The Dirichlet distribution calculates the probability of occurrence of each haplotype
+    HaplotypeSelect HaplotypeSelectClass(hapKmerCountVec);
+    HaplotypeSelectClass.calculate_sparsity();
+    HaplotypeSelectClass.generate_sparse_frequency_vector();
+    hapIdxScoreMap = HaplotypeSelectClass.get_top_indices(haploidNum);  // map<hapIdx, possibility>
     if (topHapVec.empty()) {
-        HaplotypeSelect HaplotypeSelectClass(hapKmerCountVec);
-        HaplotypeSelectClass.calculate_sparsity();
-        HaplotypeSelectClass.generate_sparse_frequency_vector();
-        HaplotypeSelectClass.get_top_indices(haploidNum);  // map<hapIdx, possibility>
         topHapVec = HaplotypeSelectClass.mTopHapVec;
     }
 
     std::lock_guard<std::mutex> mtx_locker(mtxG);
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Haplotype selection results for " << chromosome << "-" << newStartNodeIterL->first << " (Average coverage of k-mers: " << aveKmerCoverage << "):";  // print log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Haplotype selection results for " << chromosome << "-" << newStartNodeIterL->first << ":";  // print log
     for (uint16_t i = 0; i < topHapVec.size(); i++) {
         uint16_t hapIdxTmp = topHapVec[i];
         if (i == 0) {
@@ -500,18 +597,18 @@ void GENOTYPE::haplotype_selection(
 
 /**
  * @author zezhen du
- * @date 2023/09/06
+ * @date 2023/12/04
  * @version v1.0
- * @brief Hidden states (2)
+ * @brief Hidden states
  * 
- * @param genomeType          specify the genotype of the reference genome (homozygous/heterozygous)
- * @param refPloidy           genome ploidy
+ * @param sampleType          specify the genotype of the sample genome (hom/het)
+ * @param samplePloidy        sample ploidy
  * @param chromosome          chromosome
  * @param nodeStart           Node start position
  * @param startNodeIter       node iterator, map<string, map<uint32_t, nodeSrt> >
  * @param node                node information, output by construct
  * @param topHapVec           The haplotype finally screened out by the block
- * @param NodeAveKmerCoverage average coverage of k-mers in nodes
+ * @param hapIdxQRmap         map<hapIdx, tuple<quotient, remainder> >
  * @param lower               95% confidence interval for average coverage
  * @param upper               95% confidence interval for average coverage
  * @param kmerLen
@@ -520,14 +617,14 @@ void GENOTYPE::haplotype_selection(
  * @return HHSStrVec          vector<HHS>
 **/
 vector<HHS> GENOTYPE::hidden_states(
-    const string& genomeType, 
-    const uint32_t& refPloidy, 
+    const string& sampleType, 
+    const uint32_t& samplePloidy, 
     const string& chromosome, 
     const uint32_t& nodeStart, 
     map<string, map<uint32_t, nodeSrt> >::iterator startNodeIter, 
     nodeSrt& node, 
     const vector<uint16_t>& topHapVec, 
-    float& NodeAveKmerCoverage, 
+    const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap, 
     const double& lower, 
     const double& upper, 
     const uint32_t& kmerLen, 
@@ -536,16 +633,6 @@ vector<HHS> GENOTYPE::hidden_states(
 {
     // all haplotype combinations
     vector<HHS> HHSStrVec;  // vector<HHS>
-
-    // Quotient and remainder for each haplotype in topHapVec
-    unordered_map<uint16_t, tuple<uint16_t, uint16_t> > hapIdxQRmap;  // map<hapIdx, tuple<quotient, remainder> >
-    for (const auto& hapIdx : topHapVec) {  // vector<hapIdx>
-        hapIdxQRmap[hapIdx] = {DIVIDE_BY_8(hapIdx), GET_LOW_3_BITS(hapIdx)};
-    }
-
-    // The number and coverage of k-mers with frequency == 1
-    uint64_t kmerNum = 0;
-    uint64_t kmerCovSum = 0;
 
     // Traverse all node k-mer, construct hidden state
     vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator> GraphKmerHashHapStrMapIterVec;  // Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
@@ -560,7 +647,7 @@ vector<HHS> GENOTYPE::hidden_states(
     /* ============================================ Hidden states ============================================ */
 
     // Build a hidden matrix
-    vector<vector<uint16_t> > ComHapVec = increment_vector(topHapVec, genomeType, refPloidy);
+    vector<vector<uint16_t> > ComHapVec = increment_vector(topHapVec, sampleType, samplePloidy);
     for (const auto& hapVec : ComHapVec) {
         HHS HHSStr;
         // Record haplotypes combined into hapVec
@@ -588,7 +675,7 @@ vector<HHS> GENOTYPE::hidden_states(
         if (filter) {
             uint64_t kmerFrq = 0;
             for (const auto& hapIdx : topHapVec) {  // vector<hapIdx>
-                kmerFrq += graphBitsVector[get<0>(hapIdxQRmap[hapIdx])][get<1>(hapIdxQRmap[hapIdx])];
+                kmerFrq += graphBitsVector[get<0>(hapIdxQRmap.at(hapIdx))][get<1>(hapIdxQRmap.at(hapIdx))];
             }
 
             // If the frequency is 0, skip the k-mer
@@ -611,7 +698,7 @@ vector<HHS> GENOTYPE::hidden_states(
 
             for (const auto& hapIdx : HHSStr.hapVec) {  // vector<hapIdx>
                 
-                const auto& QR = hapIdxQRmap[hapIdx];
+                const auto& QR = hapIdxQRmap.at(hapIdx);
 
                 // If the k-mer does fall within this interval, it is considered to be present in the genotype 0 haplotype of the current node; otherwise, it is not present.
                 uint8_t hTmp = (lastBit == 1 && hapGtVec[hapIdx] == 0 && c >= lower && c <= upper) ? 1 : graphBitsVector[get<0>(QR)][get<1>(QR)];
@@ -634,13 +721,6 @@ vector<HHS> GENOTYPE::hidden_states(
 
             // Record in the HiddenStatesVec of the haplotype combination
             HHSStr.HiddenStatesVec.push_back(move(HSStr));
-        }
-        
-        // Record only k-mers with a depth greater than 0 and a frequency of 1
-        // if (c > 0 && f == 1 && lastBit == 0) {
-        if (c > 1 && f == 1 && lastBit == 0) {  // 2023/09/27
-            ++kmerNum;
-            kmerCovSum += c;
         }
     }
 
@@ -711,7 +791,7 @@ vector<HHS> GENOTYPE::hidden_states(
 
                 for (const auto& hapIdx : HHSStr.hapVec) {  // vector<hapIdx>
                     
-                    const auto& QR = hapIdxQRmap[hapIdx];
+                    const auto& QR = hapIdxQRmap.at(hapIdx);
 
                     // If the k-mer does fall within this interval, it is considered to be present in the genotype 0 haplotype of the current node; otherwise, it is not present.
                     uint8_t hTmp = (lastBit == 1 && hapGtVec[hapIdx] == 0 && c >= lower && c <= upper) ? 1 : graphBitsVector[get<0>(QR)][get<1>(QR)];
@@ -734,10 +814,6 @@ vector<HHS> GENOTYPE::hidden_states(
         }
     }
 
-
-    // The average k-mer coverage of nodes, if the number of k-mers is greater than 10, record it; otherwise, use the average coverage calculated by the thread
-    NodeAveKmerCoverage = (kmerNum > 10) ? static_cast<float>(kmerCovSum) / kmerNum : 0.0f;
-
     // Node's k-mer reassignment
     if (filter) {
         std::lock_guard<std::mutex> mtx_locker(mtxG);
@@ -752,23 +828,62 @@ vector<HHS> GENOTYPE::hidden_states(
  * @author zezhen du
  * @brief Gets the combination of all haplotypes
  * 
- * @param hapVec     Vector of haplotypes     
- * @param genomeType specify the genotype of the reference genome (homozygous/heterozygous) [homozygous]
- * @param refPloidy  genome ploidy (2-8) [2]
+ * @param hapVec        Vector of haplotypes     
+ * @param sampleType    specify the genotype of the sample genome (hom/het)
+ * @param samplePloidy  sample ploidy (2-8) [2]
  * 
  * @return ComHapVec
 **/
-vector<vector<uint16_t> > GENOTYPE::increment_vector(const vector<uint16_t>& hapVec, const string& genomeType, const uint32_t& refPloidy) {
+vector<vector<uint16_t> > GENOTYPE::increment_vector(
+    const vector<uint16_t>& hapVec, 
+    const string& sampleType, 
+    const uint32_t& samplePloidy
+) {
+    // combination of haplotype name
+    vector<vector<uint16_t> > ComHapVec;
+
+
+    /* ----------------------------------------------------------- Polyploidy ----------------------------------------------------------- */
+    // Polyploidy, sample haplotype combination
+    if (samplePloidy > 2) {
+        // sample haplotype
+        for (const auto& hap : hapVec) {
+            vector<uint16_t> hapVecTmp(samplePloidy);
+
+            // If it is the reference genome, then all are 0
+            if (hap == 0) {
+                hapVecTmp.assign(samplePloidy, 0);
+            } else {
+                int32_t quotient = ceil(hap / (float) samplePloidy);
+                uint16_t firstHap = (quotient - 1) * samplePloidy + 1;
+            
+                iota(hapVecTmp.begin(), hapVecTmp.end(), firstHap);
+            }
+            ComHapVec.push_back(hapVecTmp);
+        }
+
+        // sort and deduplication
+        std::set<std::vector<uint16_t> > ComHapVecSet(ComHapVec.begin(), ComHapVec.end());
+        ComHapVec.assign(ComHapVecSet.begin(), ComHapVecSet.end());
+
+        return ComHapVec;
+    }
+
+
+    /* ----------------------------------------------------------- diploid ----------------------------------------------------------- */
+    // number of haplotype
 	uint32_t hapNum = hapVec.size() - 1;
 
+    // combination of haplotype index (selected vector)
 	vector<vector<uint32_t> > hapIdxVecIdxVec;
 
-	for (uint32_t hapIdx = 0; hapIdx < hapVec.size(); hapIdx++)
-	{
-		std::vector<uint32_t> vec(refPloidy, hapIdx);
+	for (uint32_t hapIdx = 0; hapIdx < hapVec.size(); hapIdx++) {
+        // homozygous
+		std::vector<uint32_t> vec(samplePloidy, hapIdx);
 		hapIdxVecIdxVec.push_back(vec);
 
-		if (genomeType == "homozygous") continue;
+        // if the sample is homozygous, the next loop proceeds
+		if (sampleType == "hom") continue;
 
 		auto minElement = std::min_element(vec.begin() + 1, vec.end());
 		while (*minElement < hapNum) {
@@ -785,7 +900,7 @@ vector<vector<uint16_t> > GENOTYPE::increment_vector(const vector<uint16_t>& hap
 		}
 	}
 
-	vector<vector<uint16_t> > ComHapVec;
+    // combination of haplotype name
     ComHapVec.reserve(hapIdxVecIdxVec.size());
 
 	for (const auto& hapIdxVec : hapIdxVecIdxVec) {
@@ -855,15 +970,13 @@ pair<long double, long double> GENOTYPE::transition_probabilities(const uint32_t
  * @param aveKmerCoverage      Average kmer coverage
  * @param HHSStrVec            All hidden states of node, output by hidden_states
  * @param node                 All information about node
- * @param refPloidy            genome ploidy
  * 
  * @return void
 **/
 void GENOTYPE::observable_states(
     const float & aveKmerCoverage, 
     vector<HHS>& HHSStrVec, 
-    nodeSrt & node, 
-    const uint32_t& refPloidy
+    nodeSrt & node
 ) {
     // 95% confidence interval for aveKmerCoverage
     double lower = 256.0f;
@@ -881,7 +994,7 @@ void GENOTYPE::observable_states(
             uint8_t f = HiddenStatesStr.f;  // k-mer frequency
 
             // Most likely k-mer frequency
-            find_most_likely_depth(h, c, f, aveKmerCoverage, lower, upper, refPloidy);
+            find_most_likely_depth(h, c, f, aveKmerCoverage, lower, upper);
 
             if (h == 0) {
                 if (debugGenotype) {
@@ -891,10 +1004,10 @@ void GENOTYPE::observable_states(
                 result *= geometric(get_error_param(aveKmerCoverage), c);
             } else {
                 if (debugGenotype) {
-                    cerr << join(HHSStr.hapVec, "/") << ": " << +h << " " << aveKmerCoverage << " " << +c << " " << poisson(aveKmerCoverage * (h / (long double)refPloidy), c) << " " << result << endl;
+                    cerr << join(HHSStr.hapVec, "/") << ": " << +h << " " << aveKmerCoverage << " " << +c << " " << poisson(aveKmerCoverage * h, c) << " " << result << endl;
                 }
                 
-                result *= poisson(aveKmerCoverage * (h / (long double)refPloidy), c);
+                result *= poisson(aveKmerCoverage * h, c);
             }
         }
     }
@@ -1005,7 +1118,7 @@ long double GENOTYPE::likelihood(long double p, uint8_t value) {
 
 /**
  * @author zezhen du
- * @date 2023/09/03
+ * @date 2023/12/04
  * @brief find_most_likely_depth
  * 
  * @param h                   hidden state
@@ -1014,7 +1127,6 @@ long double GENOTYPE::likelihood(long double p, uint8_t value) {
  * @param aveKmerCoverage     Average depth
  * @param lower               95% confidence interval for average coverage
  * @param upper               95% confidence interval for average coverage
- * @param refPloidy           genome ploidy
  * 
  * @return void
 **/
@@ -1024,15 +1136,14 @@ void GENOTYPE::find_most_likely_depth(
     const uint8_t& f, 
     const float& aveKmerCoverage, 
     const double& lower, 
-    const double& upper, 
-    const uint32_t& refPloidy
+    const double& upper
 ) {
-    // 2023/09/03 - ho
+    // 2023/12/04 - ho
     if (f == 1) {  // h/c/f 2/21/1 21
         return;
     } else {
-        if (h > 0 && c > aveKmerCoverage) {  // h/c/f 2/46/2 23 -> 2/23/2.   h/c/f 1/46/2 23 -> 2/11.5/2.
-            c = aveKmerCoverage * (h / (float)refPloidy);
+        if (h > 0 && c > (aveKmerCoverage * h)) {  // h/c/f 2/46/2 23 -> 2/23/2.   h/c/f 1/46/2 23 -> 2/11.5/2.
+            c = aveKmerCoverage * h;
         } else if (h == 0 && c > aveKmerCoverage) {  // h/c/f 0/60/2 23 -> 0/0/2  2023/09/14 -> better for plant genomes
             c = (f > ((float)c / upper)) ? 0 : c / (float)f;
         } else if (h == 0 && c <= aveKmerCoverage) {  // h/c/f 0/11/2 21 -> 0/5.5/2  2023/09/14 -> better for plant genomes
@@ -1045,11 +1156,12 @@ void GENOTYPE::find_most_likely_depth(
 
 /**
  * @author zezhen du
- * @date 2023/09/22
+ * @date 2023/11/29
  * @version v1.0
  * @brief forward algorithm
  * 
  * @param preHMMScoreVec        Alpha of previous state
+ * @param hapIdxScoreMap        Likelihood of haplotype occurrence: map<hapIdx, possibility>
  * @param recombProb            probability of recombination
  * @param noRecombProb          Probability of non-recombination
  * @param HHSStrVec             observation matrix
@@ -1059,6 +1171,7 @@ void GENOTYPE::find_most_likely_depth(
 **/
 void GENOTYPE::forward(
     const vector<HMMScore>& preHMMScoreVec, 
+    const unordered_map<uint16_t, double>& hapIdxScoreMap, 
     const long double& recombProb, 
     const long double& noRecombProb, 
     const vector<HHS>& HHSStrVec, 
@@ -1082,17 +1195,34 @@ void GENOTYPE::forward(
         }
         else {  // not the first node
             for (const auto& HMMScoreTmp : preHMMScoreVec) {  // vector<HMMScore>
-                // Calculate the number of intersects
-                vector<uint16_t> intersection;
-                std::set_intersection(hapVec.begin(), hapVec.end(),
-                                    HMMScoreTmp.hapVec.begin(), HMMScoreTmp.hapVec.end(),
-                                    std::back_inserter(intersection));
-                
-                int32_t noRecombNum = intersection.size();  // Number of noRecomb
-                int32_t recombNum = hapNum - noRecombNum;  // Number of recomb
+                // haplotype frequency
+                if (recombProb == 0.0L && noRecombProb == 0.0L) {
+                    long double resultTmp = HMMScoreTmp.a * observableScore;  // temporary score
+                    for (const auto hapIdx : hapVec) {
+                        auto findIter = hapIdxScoreMap.find(hapIdx);
+                        if (findIter == hapIdxScoreMap.end()) {
+                            cerr << "[" << __func__ << "::" << getTime() << "] " 
+                                << "'" << hapIdx << "' does not exist in 'hapIdxScoreMap'." << endl;
+                            exit(1);
+                        }
+                        resultTmp *= findIter->second;
+                    }
 
-                // score
-                result += HMMScoreTmp.a * pow(noRecombProb, noRecombNum)  * pow(recombProb, recombNum) * observableScore;
+                    // score
+                    result += resultTmp;
+                } else {  // recombination rate
+                    // Calculate the number of intersects
+                    vector<uint16_t> intersection;
+                    std::set_intersection(hapVec.begin(), hapVec.end(),
+                                        HMMScoreTmp.hapVec.begin(), HMMScoreTmp.hapVec.end(),
+                                        std::back_inserter(intersection));
+                    
+                    int32_t noRecombNum = intersection.size();  // Number of noRecomb
+                    int32_t recombNum = hapNum - noRecombNum;  // Number of recomb
+
+                    // score
+                    result += HMMScoreTmp.a * pow(noRecombProb, noRecombNum)  * pow(recombProb, recombNum) * observableScore;
+                }
             }
         }
         
@@ -1127,11 +1257,12 @@ void GENOTYPE::forward(
 
 /**
  * @author zezhen du
- * @date 2023/09/22
+ * @date 2023/11/29
  * @version v1.0
  * @brief backward algorithm
  * 
  * @param preHMMScoreVec        Beta of previous state
+ * @param hapIdxScoreMap        Likelihood of haplotype occurrence: map<hapIdx, possibility>
  * @param recombProb            probability of recombination
  * @param noRecombProb          Probability of non-recombination
  * @param HHSStrVec             observation matrix
@@ -1141,6 +1272,7 @@ void GENOTYPE::forward(
 **/
 void GENOTYPE::backward(
     const vector<HMMScore>& preHMMScoreVec, 
+    const unordered_map<uint16_t, double>& hapIdxScoreMap, 
     const long double& recombProb, 
     const long double& noRecombProb, 
     const vector<HHS>& HHSStrVec, 
@@ -1164,17 +1296,34 @@ void GENOTYPE::backward(
         }
         else {  // not the first node
             for (const auto& HMMScoreTmp : preHMMScoreVec) {  // vector<HMMScore>
-                // Calculate the number of intersects
-                vector<uint16_t> intersection;
-                std::set_intersection(hapVec.begin(), hapVec.end(),
-                                    HMMScoreTmp.hapVec.begin(), HMMScoreTmp.hapVec.end(),
-                                    std::back_inserter(intersection));
-                
-                int32_t noRecombNum = intersection.size();  // Number of noRecomb
-                int32_t recombNum = hapNum - noRecombNum;  // Number of recomb
+                // haplotype frequency
+                if (recombProb == 0.0L && noRecombProb == 0.0L) {
+                    long double resultTmp = HMMScoreTmp.b * observableScore;  // temporary score
+                    for (const auto hapIdx : hapVec) {
+                        auto findIter = hapIdxScoreMap.find(hapIdx);
+                        if (findIter == hapIdxScoreMap.end()) {
+                            cerr << "[" << __func__ << "::" << getTime() << "] " 
+                                << "'" << hapIdx << "' does not exist in 'hapIdxScoreMap'." << endl;
+                            exit(1);
+                        }
+                        resultTmp *= findIter->second;
+                    }
+                    
+                    // score
+                    result += resultTmp;
+                } else {  // recombination rate
+                    // Calculate the number of intersects
+                    vector<uint16_t> intersection;
+                    std::set_intersection(hapVec.begin(), hapVec.end(),
+                                        HMMScoreTmp.hapVec.begin(), HMMScoreTmp.hapVec.end(),
+                                        std::back_inserter(intersection));
+                    
+                    int32_t noRecombNum = intersection.size();  // Number of noRecomb
+                    int32_t recombNum = hapNum - noRecombNum;  // Number of recomb
 
-                // score
-                result += HMMScoreTmp.b * pow(noRecombProb, noRecombNum) * pow(recombProb, recombNum) * observableScore;
+                    // score
+                    result += HMMScoreTmp.b * pow(noRecombProb, noRecombNum) * pow(recombProb, recombNum) * observableScore;
+                }
             }
         }
 
@@ -1224,14 +1373,8 @@ int GENOTYPE::posterior(
 {
     if (nodePtr == nullptr) {return 0;}
 
-    // The Average coverage and vector of node k-mers
-    float nodeAveKmerCoverage;
-    vector<uint8_t> kmerCoverageVec;
-    cal_node_cov(
-        (*nodePtr).GraphKmerHashHapStrMapIterVec, 
-        nodeAveKmerCoverage, 
-        kmerCoverageVec
-    );
+    // Number of node-unique k-mers, UK
+    uint8_t uniqueKmerNum = get_UK((*nodePtr).GraphKmerHashHapStrMapIterVec);
 
     // map<hapIdx, tuple<k-mer Number, k-mer total coverage> >
     unordered_map<uint16_t, tuple<uint64_t, uint64_t> > hapIdxKmerInfoMap;
@@ -1313,7 +1456,8 @@ int GENOTYPE::posterior(
                 posteriorInfo.kmerAveCovVec.push_back(result);
             }
 
-            posteriorInfo.NodeKmerAveCov = nodeAveKmerCoverage;  // Node k-mer average depth
+            // Number of node-unique k-mers, UK
+            posteriorInfo.uniqueKmerNum = uniqueKmerNum;
         } else if (maxPosteriorScore == posteriorScore) {
             posteriorInfo.probability += posteriorScore;  // Posterior probability
         }
@@ -1332,41 +1476,26 @@ int GENOTYPE::posterior(
 
 /**
  * @author zezhen du
- * @date 2023/08/30
+ * @date 2023/12/08
  * @version v1.0.1
- * @brief calculate Node k-mers Coverage
+ * @brief Number of node-unique k-mers, UK
  * 
  * @param GraphKmerHashHapStrMapIterVec      Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
- * @param nodeAveKmerCoverage                the average k-mers coverage of node
- * @param kmerCoverageVec                    the k-mers vector of node
  * 
- * @return void
+ * @return uniqueKmerNum
 **/
-void GENOTYPE::cal_node_cov(
-    const vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec, 
-    float & nodeAveKmerCoverage,
-    vector<uint8_t> & kmerCoverageVec
+uint8_t GENOTYPE::get_UK(
+    const vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec
 )
 {
-    kmerCoverageVec.reserve(GraphKmerHashHapStrMapIterVec.size());
-
-    uint64_t nodeKmerNum = 0;
-    uint64_t nodeSumKmerCoverage = 0;
+    uint8_t uniqueKmerNum = 0;
     
     for (const auto& GraphKmerHashHapStrMapIter : GraphKmerHashHapStrMapIterVec) {  // use structured bindings to access only the key
-        // 2023/09/27
-        const uint8_t& c = GraphKmerHashHapStrMapIter->second.c;
-        const uint8_t& f = GraphKmerHashHapStrMapIter->second.f;
-        if (c <= 1 || f > 1) {
-            continue;
-        }
+        if (GraphKmerHashHapStrMapIter->second.f > 1) continue;
         
-        ++nodeKmerNum;
-        nodeSumKmerCoverage += c;
-        kmerCoverageVec.emplace_back(c);
+        if (uniqueKmerNum < UINT8_MAX) uniqueKmerNum++;
     }
-
-    nodeAveKmerCoverage = (nodeKmerNum > 0) ? static_cast<float>(nodeSumKmerCoverage) / nodeKmerNum : 0.0f;
+    return uniqueKmerNum;
 }
 
 
@@ -1394,6 +1523,7 @@ double GENOTYPE::cal_phred_scaled(long double value) {
  * @param GraphMap            construct_index output result, map<string, map<uint32_t, nodeSrt>>
  * @param vcfHead             the VCF file comment lines
  * @param vcfInfoMap          vcf information, for output
+ * @param sampleName          sample name
  * @param outputFileName      output file information
  * 
  * @return 0
@@ -1402,6 +1532,7 @@ int GENOTYPE::save(
     map<string, map<uint32_t, nodeSrt> > & GraphMap, 
     string vcfHead, 
     map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
+    const string& sampleName, 
     const string & outputFileName
 )
 {
@@ -1414,7 +1545,7 @@ int GENOTYPE::save(
     oss << std::fixed << std::setprecision(1);
 
     // save the VCF file comment lines
-    oss << vcfHead;
+    oss << vcfHead + "\t" + sampleName + "\n";
 
     SAVE SAVEClass(outputFileName);
 
@@ -1427,39 +1558,53 @@ int GENOTYPE::save(
             const auto& posteriorInfo = GraphMap[chromosome][nodeStart].posteriorInfo;
 
             if (posteriorInfo.hapVec.size() > 0) {
+                // genotyping result
+                vector<string> gtTxtVec;
+                for (size_t i = 0; i < posteriorInfo.hapVec.size(); i++) {
+                    gtTxtVec.push_back(to_string(hapGtVec[posteriorInfo.hapVec[i]]));
+                }
+
+                // If the genotype is empty, skip this site
+                if (all_of(gtTxtVec.begin(), gtTxtVec.end(), [](string c) { return c == "0" || c == "."; })) {
+                    continue;
+                }
+
                 // Original information
-                for (size_t i = 0; i < vcfInfo.size(); i++) {
+                for (size_t i = 0; i < 9; i++) {
                     if (i == 0) {
                         oss << vcfInfo[i];
                     } else if (i < 8) {
-                        oss << "\t" << vcfInfo[i];
+                        if (i == 6) {  // FILTER
+                            oss << "\tPASS";
+                        } else {
+                            oss << "\t" << vcfInfo[i];
+                        }
                     } else if (i == 8) {
-                        oss << "\t" << "GT:GQ:GPP:NAK:KC:NKC";
-                    } else {
-                        oss << "\t" << vcfInfo[i] << ":.:.:.:.:.";
+                        oss << "\t" << "GT:GQ:GPP:NAK:KC:UK";
                     }
                 }
                 
-                // genotyping result
-                oss << "\t";
-
-                // GT
-                for (size_t i = 0; i < posteriorInfo.hapVec.size(); i++) {
-                    if (i == 0) {
-                        oss << hapGtVec[posteriorInfo.hapVec[i]];
-                    } else {
-                        oss << "/" << hapGtVec[posteriorInfo.hapVec[i]];
-                    }
-                }
+                // Genotype
+                oss << "\t" << join(gtTxtVec, "/");
                 
-                oss << ":" 
-                    << cal_phred_scaled(posteriorInfo.probability) << ":" 
+                // Genotype quality (phred-scaled 1 - max(GPP)), Genotype posterior probabilities, Number of allele k-mers
+                oss << ":" << cal_phred_scaled(posteriorInfo.probability) << ":" 
                     << posteriorInfo.probability << ":" 
-                    << join(posteriorInfo.kmerNumVec, ",") << ":" 
-                    << join(posteriorInfo.kmerAveCovVec, ",") << ":" 
-                    << posteriorInfo.NodeKmerAveCov 
-                    << "\n";
+                    << join(posteriorInfo.kmerNumVec, ",") << ":" ;
+                
+                // Coverage of allele k-mers
+                for (size_t i = 0; i < posteriorInfo.kmerAveCovVec.size(); i++) {
+                    if (i == 0) {
+                        oss << posteriorInfo.kmerAveCovVec[i];
+                    } else {
+                        oss << "," << posteriorInfo.kmerAveCovVec[i];
+                    }
+                }
+                
+                // Number of node-unique k-mers, UK
+                oss << ":" << +posteriorInfo.uniqueKmerNum << "\n";
             }
+            
             // Check the buffer size, if it exceeds the maximum, write the buffer content to the file and empty the buffer
             if (oss.tellp() > CACHE_SIZE) {
                 string outTxt = oss.str();

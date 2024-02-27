@@ -101,7 +101,7 @@ int kmerBit::kmer_sketch_bf(const string& str, const uint32_t& k, BloomFilter* b
  *                                  a[i].x = kMer<<8 | kmerSpan
  * @param bf                        Frequency of kmers in the reference genome, Counting Bloom Filter
 **/
-void kmerBit::kmer_sketch_construct(string str, uint32_t k, map<uint8_t, unordered_set<uint64_t> >& freKmerHashSetMap, BloomFilter* bf)
+void kmerBit::kmer_sketch_construct(string& str, uint32_t k, map<uint8_t, unordered_set<uint64_t> >& freKmerHashSetMap, BloomFilter* bf)
 {
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
@@ -151,9 +151,10 @@ void kmerBit::kmer_sketch_construct(string str, uint32_t k, map<uint8_t, unorder
 vector<uint64_t> kmerBit::kmer_sketch_fastq(
 	const string& str, 
 	const uint32_t& k, 
-	const unordered_map<uint64_t, kmerCovFreBitVec> & GraphKmerHashHapStrMap
+	const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
 ) {
 	vector<uint64_t> hashVec;  // save k-mers
+	hashVec.reserve(str.size());
 
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
@@ -204,6 +205,7 @@ unordered_set<uint64_t> kmerBit::kmer_sketch_genotype(
 	const uint32_t& k
 ) {
 	unordered_set<uint64_t> hashSet;
+	hashSet.reserve(str.size());
 	
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;

@@ -10,6 +10,7 @@
 #include <iomanip>
 #include <bitset>
 #include <cmath>
+#include <set>
 
 #include "save.hpp"
 #include "get_time.hpp"
@@ -55,36 +56,48 @@ namespace GENOTYPE
 {
     /**
      * @author zezhen du
-     * @date 2023/09/22
-     * @version v1.0.1
+     * @date 2023/12/04
+     * @version v1.0.2
      * @brief genotype
      * 
+     * @param mFastaLenMap           chromosome length
      * @param GraphMap               output of construct_index: map<string, map<uint32_t, nodeSrt>>
      * @param hapMap                 Contains all haplotypes
      * @param vcfHead                the VCF file comment lines
      * @param vcfInfoMap             VCF information
-     * @param genomeType             specify the genotype of the reference genome (homozygous/heterozygous)
-     * @param refPloidy              genome ploidy
-     * @param ReadDepth              sequencing data depth
+     * @param hapIdxQRmap            map<hapIdx, tuple<quotient, remainder> >
+     * @param sampleType             specify the genotype of the sample genome (hom/het)
+     * @param samplePloidy           sample ploidy
+     * @param hapKmerCoverage        haplotype k-mer coverage
+     * @param sampleName             sample name
      * @param outputFileName         output filename
      * @param kmerLen
      * @param haploidNum             the haploid number for genotyping
+     * @param chrLenThread           Chromosome granularity
+     * @param transitionProType      transition probability type
+     * @param svGenotypeBool         structural variation genotyping only
      * @param threads
      * @param debug
      * 
      * @return 0
     **/
     int genotype(
+        const unordered_map<string, uint32_t> & mFastaLenMap, 
         map<string, map<uint32_t, nodeSrt> > & GraphMap, 
         const map<uint16_t, string> & hapMap, 
         const string& vcfHead, 
         map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
-        const string& genomeType, 
-        const uint32_t& refPloidy, 
-        const float& ReadDepth, 
+        const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap, 
+        const string& sampleType, 
+        const uint32_t& samplePloidy, 
+        const float& hapKmerCoverage, 
+        const string& sampleName, 
         const string & outputFileName, 
-        uint32_t kmerLen, 
+        const uint32_t kmerLen, 
         uint32_t haploidNum, 
+        uint32_t chrLenThread, 
+        const string& transitionProType, 
+        const bool& svGenotypeBool, 
         uint32_t threads, 
         const bool & debug
     );
@@ -92,38 +105,46 @@ namespace GENOTYPE
 
     /**
      * @author zezhen du
-     * @date 2023/09/22
+     * @date 2023/12/04
      * @version v1.0.1
      * @brief forward/backward run
      * 
-     * @param startNodeIter       node iterator
-     * @param hapMap              haplotype information
-     * @param genomeType          specify the genotype of the reference genome (homozygous/heterozygous)
-     * @param refPloidy           genome ploidy
-     * @param ReadDepth           sequencing data depth
-     * @param threadStart         iterator start position
-     * @param threadEnd           iterator end position
+     * @param startNodeIter        node iterator
+     * @param hapMap               haplotype information
+     * @param sampleType           specify the genotype of the sample genome (hom/het)
+     * @param samplePloidy         sample ploidy
+     * @param hapKmerCoverage      haplotype k-mer coverage
+     * @param hapIdxQRmap          map<hapIdx, tuple<quotient, remainder> >
+     * @param threadStart          iterator start position
+     * @param threadEnd            iterator end position
      * @param kmerLen
-     * @param haploidNum          the haploid number for genotyping
+     * @param haploidNum           the haploid number for genotyping
+     * @param transitionProType    transition probability type
+     * @param svGenotypeBool       structural variation genotyping only
+     * @param vcfInfoMap           VCF information, map<chromosome, map<start, vector> >
      * 
      * @return 0
     **/
     int for_bac_post_run(
         map<string, map<uint32_t, nodeSrt> >::iterator startNodeIter, 
         const map<uint16_t, string> & hapMap, 
-        const string& genomeType, 
-        const uint32_t& refPloidy, 
-        const float& ReadDepth,
+        const string& sampleType, 
+        const uint32_t& samplePloidy, 
+        const float& hapKmerCoverage,
+        const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap, 
         uint32_t threadStart, 
         uint32_t threadEnd, 
-        uint32_t kmerLen, 
-        uint32_t haploidNum
+        const uint32_t& kmerLen, 
+        const uint32_t& haploidNum, 
+        const string& transitionProType, 
+        const bool& svGenotypeBool, 
+        const map<string, map<uint32_t, vector<string> > >& vcfInfoMap
     );
 
 
     /**
      * @author zezhen du
-     * @date 2023/09/22
+     * @date 2023/12/13
      * @version v1.0
      * @brief haplotype selection
      * 
@@ -133,7 +154,7 @@ namespace GENOTYPE
      * @param hapMap                haplotype information
      * @param haploidNum            the haploid number for genotyping
      * @param topHapVec             Haplotype index for final screening in this block
-     * @param aveKmerCoverage       the average k-mers coverage
+     * @param hapIdxScoreMap        Likelihood of haplotype occurrence: map<hapIdx, possibility>
      * 
      * @return void
     **/
@@ -141,27 +162,27 @@ namespace GENOTYPE
         const string& chromosome, 
         const map<uint32_t, nodeSrt>::iterator& newStartNodeIterL, 
         const map<uint32_t, nodeSrt>::iterator& newStartNodeIterR, 
-        const map<uint16_t, string> & hapMap, 
-        uint32_t haploidNum, 
+        const map<uint16_t, string>& hapMap, 
+        const uint32_t haploidNum, 
         vector<uint16_t>& topHapVec, 
-        float & aveKmerCoverage
+        unordered_map<uint16_t, double>& hapIdxScoreMap
     );
 
 
     /**
      * @author zezhen du
-     * @date 2023/09/06
+     * @date 2023/12/04
      * @version v1.0
-     * @brief Hidden states (2)
+     * @brief Hidden states
      * 
-     * @param genomeType          specify the genotype of the reference genome (homozygous/heterozygous)
-     * @param refPloidy           genome ploidy
+     * @param sampleType          specify the genotype of the sample genome (hom/het)
+     * @param samplePloidy        sample ploidy
      * @param chromosome          chromosome
      * @param nodeStart           Node start position
      * @param startNodeIter       node iterator, map<string, map<uint32_t, nodeSrt> >
      * @param node                node information, output by construct
      * @param topHapVec           The haplotype finally screened out by the block
-     * @param NodeAveKmerCoverage average coverage of k-mers in nodes
+     * @param hapIdxQRmap         map<hapIdx, tuple<quotient, remainder> >
      * @param lower               95% confidence interval for average coverage
      * @param upper               95% confidence interval for average coverage
      * @param kmerLen
@@ -170,14 +191,14 @@ namespace GENOTYPE
      * @return HHSStrVec          vector<HHS>
     **/
     vector<HHS> hidden_states(
-        const string& genomeType, 
-        const uint32_t& refPloidy, 
+        const string& sampleType, 
+        const uint32_t& samplePloidy, 
         const string& chromosome, 
         const uint32_t& nodeStart, 
         map<string, map<uint32_t, nodeSrt> >::iterator startNodeIter, 
         nodeSrt& node, 
         const vector<uint16_t>& topHapVec, 
-        float& NodeAveKmerCoverage, 
+        const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap, 
         const double& lower, 
         const double& upper, 
         const uint32_t& kmerLen, 
@@ -189,13 +210,13 @@ namespace GENOTYPE
      * @author zezhen du
      * @brief Gets the combination of all haplotypes
      * 
-     * @param hapVec     Vector of haplotypes     
-     * @param genomeType specify the genotype of the reference genome (homozygous/heterozygous) [homozygous]
-     * @param refPloidy  genome ploidy (2-8) [2]
+     * @param hapVec        Vector of haplotypes     
+     * @param sampleType    specify the genotype of the sample genome (hom/het)
+     * @param samplePloidy  sample ploidy (2-8) [2]
      * 
      * @return ComHapVec
     **/
-    vector<vector<uint16_t> > increment_vector(const vector<uint16_t>& hapVec, const string& genomeType, const uint32_t& refPloidy);
+    vector<vector<uint16_t> > increment_vector(const vector<uint16_t>& hapVec, const string& sampleType, const uint32_t& samplePloidy);
 
 
     /**
@@ -234,15 +255,13 @@ namespace GENOTYPE
      * @param aveKmerCoverage      Average kmer coverage
      * @param HHSStrVec            All hidden states of node, output by hidden_states
      * @param node                 All information about node
-     * @param refPloidy            genome ploidy
      * 
      * @return void
     **/
     void observable_states(
         const float & aveKmerCoverage, 
         vector<HHS>& HHSStrVec, 
-        nodeSrt & node, 
-        const uint32_t& refPloidy
+        nodeSrt & node
     );
     
 
@@ -296,7 +315,7 @@ namespace GENOTYPE
 
     /**
      * @author zezhen du
-     * @date 2023/09/03
+     * @date 2023/12/04
      * @brief find_most_likely_depth
      * 
      * @param h                   hidden state
@@ -305,7 +324,6 @@ namespace GENOTYPE
      * @param aveKmerCoverage     Average depth
      * @param lower               95% confidence interval for average coverage
      * @param upper               95% confidence interval for average coverage
-     * @param refPloidy           genome ploidy
      * 
      * @return void
     **/
@@ -315,18 +333,18 @@ namespace GENOTYPE
         const uint8_t& f, 
         const float& aveKmerCoverage, 
         const double& lower, 
-        const double& upper,  
-        const uint32_t& refPloidy
+        const double& upper
     );
 
 
     /**
      * @author zezhen du
-     * @date 2023/09/22
+     * @date 2023/11/29
      * @version v1.0
      * @brief forward algorithm
      * 
      * @param preHMMScoreVec        Alpha of previous state
+     * @param hapIdxScoreMap        Likelihood of haplotype occurrence: map<hapIdx, possibility>
      * @param recombProb            probability of recombination
      * @param noRecombProb          Probability of non-recombination
      * @param HHSStrVec             observation matrix
@@ -336,6 +354,7 @@ namespace GENOTYPE
     **/
     void forward(
         const vector<HMMScore>& preHMMScoreVec, 
+        const unordered_map<uint16_t, double>& hapIdxScoreMap, 
         const long double& recombProb, 
         const long double& noRecombProb, 
         const vector<HHS>& HHSStrVec, 
@@ -345,11 +364,12 @@ namespace GENOTYPE
 
     /**
      * @author zezhen du
-     * @date 2023/09/22
+     * @date 2023/11/29
      * @version v1.0
      * @brief backward algorithm
      * 
      * @param preHMMScoreVec        Beta of previous state
+     * @param hapIdxScoreMap        Likelihood of haplotype occurrence: map<hapIdx, possibility>
      * @param recombProb            probability of recombination
      * @param noRecombProb          Probability of non-recombination
      * @param HHSStrVec             observation matrix
@@ -359,6 +379,7 @@ namespace GENOTYPE
     **/
     void backward(
         const vector<HMMScore>& preHMMScoreVec, 
+        const unordered_map<uint16_t, double>& hapIdxScoreMap, 
         const long double& recombProb, 
         const long double& noRecombProb, 
         const vector<HHS>& HHSStrVec, 
@@ -387,20 +408,16 @@ namespace GENOTYPE
 
     /**
      * @author zezhen du
-     * @date 2023/08/30
+     * @date 2023/12/08
      * @version v1.0.1
-     * @brief calculate Node k-mers Coverage
+     * @brief Number of node-unique k-mers, UK
      * 
      * @param GraphKmerHashHapStrMapIterVec      Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
-     * @param nodeAveKmerCoverage                the average k-mers coverage of node
-     * @param kmerCoverageVec                    the k-mers vector of node
      * 
-     * @return void
+     * @return uniqueKmerNum
     **/
-    void cal_node_cov(
-        const vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec, 
-        float & nodeAveKmerCoverage,
-        vector<uint8_t> & kmerCoverageVec
+    uint8_t get_UK(
+        const vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec
     );
 
 
@@ -423,9 +440,10 @@ namespace GENOTYPE
      * @version v1.0
      * @brief Save the result
      * 
-     * @param GraphMap            construct_indexÊä³ö½á¹û£¬map<string, map<uint32_t, nodeSrt>>
+     * @param GraphMap            output of construct_index£¬map<string, map<uint32_t, nodeSrt>>
      * @param vcfHead             the VCF file comment lines
      * @param vcfInfoMap          vcf information for output
+     * @param sampleName          sample name
      * @param outputFileName      Output file information
      * 
      * @return 0
@@ -434,6 +452,7 @@ namespace GENOTYPE
         map<string, map<uint32_t, nodeSrt> > & GraphMap, 
         string vcfHead, 
         map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
+        const string& sampleName, 
         const string & outputFileName
     );
 }
