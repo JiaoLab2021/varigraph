@@ -149,6 +149,8 @@ public:
 
     unordered_map<uint16_t, tuple<uint16_t, uint16_t> > mHapIdxQRmap;  // map<hapIdx, tuple<quotient, remainder> >
 
+    uint64_t mGraphBaseNum = 0;  // The number of bases in the graph
+
     ConstructIndex(
         const string& refFileName, 
         const string& vcfFileName, 
@@ -399,7 +401,7 @@ namespace construct_index
      * 
      * @param haplotype       haplotype index
      * @param altGt           genotype
-     * @param altLen          ALT sequence length
+     * @param altSeq          ALT sequence
      * @param seqLen          k-mer length - 1
      * @param nodeIter        startNodeMap iterator where the node is located
      * @param startNodeMap    All chromosome node information startNodeMap, index function construction
@@ -409,7 +411,7 @@ namespace construct_index
     pair<string, string> find_node_up_down_seq(
         const uint16_t& haplotype, 
         const uint16_t& altGt, 
-        uint32_t altLen, 
+        string& altSeq, 
         const uint32_t & seqLen,
         const map<uint32_t, nodeSrt>::iterator & nodeIter, 
         const map<uint32_t, nodeSrt> & startNodeMap

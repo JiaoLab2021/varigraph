@@ -38,8 +38,7 @@ FastqKmer::FastqKmer(
  * 
  * @return void
 **/
-void FastqKmer::build_fastq_index()
-{
+void FastqKmer::build_fastq_index() {
     if (fastqFileNameVec_.empty()) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -f\n";
         exit(1);
@@ -65,8 +64,7 @@ void FastqKmer::build_fastq_index()
 **/
 void FastqKmer::fastq_file_open(
     const string & fastqFileName
-)
-{
+) {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from read: " << fastqFileName << endl;  // print log
 
     // Save the result of multithreading

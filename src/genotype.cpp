@@ -704,7 +704,7 @@ vector<HHS> GENOTYPE::hidden_states(
                 uint8_t hTmp = (lastBit == 1 && hapGtVec[hapIdx] == 0 && c >= lower && c <= upper) ? 1 : graphBitsVector[get<0>(QR)][get<1>(QR)];
                 h += hTmp;
 
-                // Determine whether the haplotype needs to rebuild the k-mers index
+                // Check if the haplotype truly contains the k-mer at the current node, as it may be present in another node for the haplotype.
                 if (hTmp > 0 && c < lower && f >= 2) {  // 1/0/2; 2/0/2
                     // Record the haplotype
                     auto emplacedValue = hapNeedIdxNumMap.emplace(hapIdx, 0).first;
@@ -748,7 +748,7 @@ vector<HHS> GENOTYPE::hidden_states(
             pair<string, string> upDownSeq = construct_index::find_node_up_down_seq(
                 hapIdx, 
                 gt, 
-                seqTmp.size(), 
+                seqTmp, 
                 kmerLen - 1, 
                 startNodeIter->second.find(nodeStart), 
                 startNodeIter->second
@@ -781,7 +781,6 @@ vector<HHS> GENOTYPE::hidden_states(
                 graphBitsVector.push_back(hapBit);
             }
 
-
             // Merge k-mer information into HHSStrVec
             for (HHS& HHSStr : HHSStrVec) {  // vector<HHS>
 
@@ -790,7 +789,7 @@ vector<HHS> GENOTYPE::hidden_states(
                 uint8_t& h = HSStr.h;
 
                 for (const auto& hapIdx : HHSStr.hapVec) {  // vector<hapIdx>
-                    
+
                     const auto& QR = hapIdxQRmap.at(hapIdx);
 
                     // If the k-mer does fall within this interval, it is considered to be present in the genotype 0 haplotype of the current node; otherwise, it is not present.

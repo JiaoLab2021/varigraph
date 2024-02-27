@@ -77,17 +77,16 @@ void Varigraph::construct()
     ConstructIndexClassPtr_->index();
 
     // save Genome Graph to file
-    if (!outputGraphFileName_.empty()) {
-        ConstructIndexClassPtr_->save_index();
-    }
+    ConstructIndexClassPtr_->save_index();
 
     // Free memory (Counting Bloom Filter)
     ConstructIndexClassPtr_->clear_mbf();
-    
+
     // log
     cerr << endl;
-    cerr << "           - " << "Number of k-mers in the Genome Graph: " << ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.size() << endl;
-    cerr << "           - " << "Number of haplotypes in the Genome Graph: " << ConstructIndexClassPtr_->mHapMap.size() << endl << endl << endl;
+    cerr << "           - " << "Total number of bases in the Genome Graph: " << ConstructIndexClassPtr_->mGraphBaseNum << endl;
+    cerr << "           - " << "Total number of k-mers present in the Genome Graph: " << ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.size() << endl;
+    cerr << "           - " << "Total number of haplotypes present in the Genome Graph: " << ConstructIndexClassPtr_->mHapMap.size() << endl << endl << endl;
 }
 
 
@@ -127,8 +126,9 @@ void Varigraph::load()
     
     // log
     cerr << endl;
-    cerr << "           - " << "Number of k-mers in the Genome Graph: " << ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.size() << endl;
-    cerr << "           - " << "Number of haplotypes in the Genome Graph: " << ConstructIndexClassPtr_->mHapMap.size() << endl << endl << endl;
+    cerr << "           - " << "Total number of bases in the Genome Graph: " << ConstructIndexClassPtr_->mGraphBaseNum << endl;
+    cerr << "           - " << "Total number of k-mers present in the Genome Graph: " << ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.size() << endl;
+    cerr << "           - " << "Total number of haplotypes present in the Genome Graph: " << ConstructIndexClassPtr_->mHapMap.size() << endl << endl << endl;
 }
 
 
@@ -161,9 +161,9 @@ void Varigraph::kmer_read()
 
     cerr << endl;
     cerr << fixed << setprecision(2);
-    cerr << "           - " << "Size of sequencing data: " << FastqKmerClass.mReadBase / 1e9 << " Gb" << endl;
-    cerr << "           - " << "Sequencing data depth: " << ReadDepth_ << endl;
-    cerr << "           - " << "Haplotype k-mer coverage: " << hapKmerCoverage_ << endl << endl << endl;
+    cerr << "           - " << "Size of the sequenced data: " << FastqKmerClass.mReadBase / 1e9 << " Gb" << endl;
+    cerr << "           - " << "Depth of the sequenced data: " << ReadDepth_ << endl;
+    cerr << "           - " << "Coverage of haplotype k-mers: " << hapKmerCoverage_ << endl << endl << endl;
     cerr << defaultfloat << setprecision(6);
 
     // Merge k-mer information from Genome Graph into nodes.
@@ -286,7 +286,7 @@ tuple<uint8_t, uint8_t> Varigraph::get_hom_kmer_c(const map<uint8_t, uint64_t>& 
     // Check if the data is correct
     if (maxIndex == -1) {
         cerr << "[" << __func__ << "::" << getTime() << "] "
-            << "Error: unable to obtain depth information of k-mers in the sequencing data, please check your data." << endl;
+            << "Error: Failed to retrieve depth information of k-mers from the sequencing data. Please verify your data." << endl;
         exit(1);
     }
     

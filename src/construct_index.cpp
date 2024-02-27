@@ -150,7 +150,7 @@ void ConstructIndex::build_fasta_index()
 **/
 void ConstructIndex::make_mbf()
 {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Calculating k-mer frequency in reference genome ...\n";
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Computing k-mer frequency in the reference genome ...\n";
 
     /* *************************************************** making or load *************************************************** */
     uint64_t bfSize = mGenomeSize - mKmerLen + 1;
@@ -164,15 +164,15 @@ void ConstructIndex::make_mbf()
         // Constructing k-mer index
         kmerBit::kmer_sketch_bf(sequence, mKmerLen, mbf);
 
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Successfully processed chromosome '" << chromosome << "' ...\n";
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Chromosome '" << chromosome << "' processed successfully ...\n";
     }
 
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom Filter successfully constructed ..." << endl << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom Filter constructed successfully ..." << endl << endl;
     
-    cerr << "           - " << "Size of Counting Bloom Filter: " << mbf->get_size() << endl;
-    cerr << "           - " << "Number of hash functions: " << mbf->get_num() << endl;
+    cerr << "           - " << "Counting Bloom Filter size: " << mbf->get_size() << endl;
+    cerr << "           - " << "Hash functions count: " << mbf->get_num() << endl;
     cerr << fixed << setprecision(2);
-    cerr << "           - " << "Usage rate of the Counting Bloom Filter: " << mbf->get_cap() << endl << endl << endl;
+    cerr << "           - " << "Counting Bloom Filter usage rate: " << mbf->get_cap() << endl << endl << endl;
     cerr << defaultfloat << setprecision(6);
 
     malloc_trim(0);	// 0 is for heap memory
@@ -225,7 +225,7 @@ void ConstructIndex::construct()
         // Check if the file is correct, if not, jump out of the code
         if (lineVec.size() < 10) {
             cerr << "[" << __func__ << "::" << getTime() << "] "
-                    << "'" << vcfFileName_  << "': Error -> number of columns in the VCF file is less than 10: " << lineVec.size() << endl;
+                << "Error in '" << vcfFileName_  << "': Number of columns in the VCF file is less than 10. Current column count: " << lineVec.size() << endl;
             exit(1);
         }
 
@@ -249,7 +249,7 @@ void ConstructIndex::construct()
                         hapIdx++;  // Haplotype index +1
                     } else {
                         cerr << "[" << __func__ << "::" << getTime() << "] "
-                            << "Error: Haplotype number > " << UINT16_MAX << endl;
+                            << "Error: The number of haplotypes exceeds the maximum limit of " << UINT16_MAX << "." << endl;
                         exit(1);
                     }
                 }
@@ -271,13 +271,13 @@ void ConstructIndex::construct()
             vector<string>::iterator gtItera = find(formatVec.begin(), formatVec.end(), "GT");
 
             int gtIndex = distance(formatVec.begin(), gtItera);
-            if (gtIndex == formatVec.size()) {  // FORMAT
+            if (gtIndex == formatVec.size()) {  // FORMAT: GT
                 cerr << "[" << __func__ << "::" << getTime() << "] "
-                    << "Error: no GT information in FORMAT: " << line << endl;
+                    << "Error: Genotype (GT) information is missing in FORMAT: " << line << endl;
                 exit(1);
             }
 
-            // If the Genome Graph index is loaded from file, only the index of the vcf is built
+            // VCF index
             vcf_construct(
                 chromosome, 
                 refStart, 
@@ -290,8 +290,8 @@ void ConstructIndex::construct()
             // Check if the chromosome is in the reference genome
             auto mFastaMapFindIter = mFastaSeqMap.find(chromosome);
             if (mFastaMapFindIter == mFastaSeqMap.end()) {
-                cerr << "[" << __func__ << "::" << getTime() << "] " 
-                    << "Error: no '" << chromosome << "' found in reference genome."<< endl;
+                cerr << "[" << __func__ << "::" << getTime() << "] "
+                    << "Error: Chromosome '" << chromosome << "' not found in reference genome." << endl;
                 exit(1);
             }
 
@@ -300,10 +300,10 @@ void ConstructIndex::construct()
                 tmpRefStart = 0;
             }
             if (tmpRefStart == refStart) {
-                cerr << "[" << __func__ << "::" << getTime() << "] " << "Warning: multiple variants observed, skip this site -> " << chromosome << " " << refStart << endl;
+                cerr << "[" << __func__ << "::" << getTime() << "] " << "Warning: Multiple variants detected, skipping this site -> " << chromosome << " " << refStart << endl;
                 continue;
             } else if (tmpRefStart > refStart) {
-                cerr << "[" << __func__ << "::" << getTime() << "] " << "Warning: unsorted variants, skip this site -> " << chromosome << " " << tmpRefStart << ">" << refStart << endl;
+                cerr << "[" << __func__ << "::" << getTime() << "] " << "Warning: Variants are unsorted, skipping this site -> " << chromosome << " " << tmpRefStart << ">" << refStart << endl;
                 continue;
             }
             
@@ -311,7 +311,7 @@ void ConstructIndex::construct()
             string trueRefSeq = mFastaMapFindIter->second.substr(refStart-1, refSeq.length());
             if (trueRefSeq != refSeq) {
                 cerr << "[" << __func__ << "::" << getTime() << "] " 
-                    << "Warning: sequence difference between refgenome and vcf, replace by refgenome sequence -> "
+                    << "Warning: Sequence discrepancy detected between reference genome and VCF. Replacing with sequence from reference genome -> "
                     << chromosome  << "\t" << refStart << endl;
                 refSeq = trueRefSeq;
             }
@@ -337,6 +337,7 @@ void ConstructIndex::construct()
                     nodeSrt& mGraphMapForChrForStart = mGraphMap[tmpChromosome][preRefStart];
 
                     mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
+                    mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
                     mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
                 }
 
@@ -352,6 +353,7 @@ void ConstructIndex::construct()
                     nodeSrt& mGraphMapForChrForStart = mGraphMap[chromosome][preRefStart];
 
                     mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
+                    mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
                     mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
                 }
             } else {  // Otherwise the node is built from the sequence in the middle of the vcf
@@ -372,6 +374,7 @@ void ConstructIndex::construct()
                     nodeSrt& mGraphMapForChrForStart = mGraphMap[chromosome][preRefStart];
 
                     mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
+                    mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
                     mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
                 }
             }
@@ -382,14 +385,17 @@ void ConstructIndex::construct()
 
             // Add the ref node first
             mGraphMapForChrForStart.seqVec.push_back(refSeq);  // Add to graph, 0
+            mGraphBaseNum += refSeq.size();  // The number of bases in the graph
             mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
 
             // qrySeqVec
             mGraphMapForChrForStart.seqVec.insert(mGraphMapForChrForStart.seqVec.end(), qrySeqVec.begin(), qrySeqVec.end());
+            // The number of bases in the graph
+            mGraphBaseNum += accumulate(qrySeqVec.begin(), qrySeqVec.end(), 0, [](int sum, const string& str) {return sum + str.size();});
             // Determine whether the variable is out of bounds, currently only supports 65535 haplotypes
             if (mGraphMapForChrForStart.seqVec.size() > UINT16_MAX) {
                 cerr << "[" << __func__ << "::" << getTime() << "] "
-                    << "Error: Haplotype number > " << UINT16_MAX << endl;
+                    << "Error: The number of haplotypes exceeds the maximum limit of " << UINT16_MAX << "." << endl;
                 exit(1);
             }
 
@@ -401,11 +407,11 @@ void ConstructIndex::construct()
                 // Check if the vcfPloidy is consistent with the parameters
                 if (gtVec.size() > mVcfPloidy) {
                     cerr << "[" << __func__ << "::" << getTime() << "] "
-                        << "Warning: The number of haplotypes at " << chromosome << "(" << refStart << ") exceeds the specified parameter. Excess haplotypes are discarded." << endl;
+                        << "Warning: The number of haplotypes at " << chromosome << "(" << refStart << ") exceeds the specified parameter. Excess haplotypes have been discarded." << endl;
                     gtVec.resize(mVcfPloidy);
                 } else if (gtVec.size() < mVcfPloidy) {
                     cerr << "[" << __func__ << "::" << getTime() << "] "
-                        << "Warning: The number of haplotypes at " << chromosome << "(" << refStart << ") is fewer than the specified parameter. Filling with zeros." << endl;
+                        << "Warning: The number of haplotypes at " << chromosome << "(" << refStart << ") is less than the specified parameter. Filling the deficit with zeros." << endl;
                     while (gtVec.size() < mVcfPloidy) {
                         gtVec.push_back("0");
                     }
@@ -418,7 +424,7 @@ void ConstructIndex::construct()
                             hapIdx++;  // Haplotype index +1
                         } else {
                             cerr << "[" << __func__ << "::" << getTime() << "] "
-                                << "Error: Haplotype number > " << UINT16_MAX << endl;
+                                << "Error: The number of haplotypes exceeds the maximum limit of " << UINT16_MAX << "." << endl;
                             exit(1);
                         }
                     } else {
@@ -428,7 +434,7 @@ void ConstructIndex::construct()
                             hapIdx++;  // Haplotype index +1
                         } else {
                             cerr << "[" << __func__ << "::" << getTime() << "] "
-                                << "Error: Haplotype number > " << UINT16_MAX << endl;
+                                << "Error: The number of haplotypes exceeds the maximum limit of " << UINT16_MAX << "." << endl;
                             exit(1);
                         }
                     }
@@ -454,6 +460,7 @@ void ConstructIndex::construct()
         nodeSrt& mGraphMapForChrForStart = mGraphMap[tmpChromosome][preRefStart];
 
         mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
+        mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
         mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
     }
 
@@ -587,8 +594,7 @@ void ConstructIndex::vcf_construct(
  * 
  * @return void
 **/
-void ConstructIndex::index()
-{
+void ConstructIndex::index() {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Building the graph index ...\n";  // print log
 
     // Save the results of multiple threads
@@ -670,7 +676,7 @@ void ConstructIndex::index()
             auto findIter = mGraphKmerHashHapStrMap.find(kmerHash);
             if (findIter == mGraphKmerHashHapStrMap.end()) {
                 cerr << "[" << __func__ << "::" << getTime() << "] " 
-                    << "Error: " << kmerHash << " is not in the mGraphKmerHashHapStrMap" << endl;
+                    << "Error: The k-mer hash '" << kmerHash << "' is not found in the mGraphKmerHashHapStrMap." << endl;
                 exit(1);
             }
             auto& f = findIter->second.f;
@@ -706,9 +712,8 @@ void ConstructIndex::index()
  * 
  * @return void
 **/
-void ConstructIndex::graph2node()
-{
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Merge k-mers information from Genome Graph into Nodes ...\n\n\n";  // print log
+void ConstructIndex::graph2node() {
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Merging k-mer information from Genome Graph into Nodes ...\n\n\n";  // print log
 
     // Save the results of multiple threads
     vector<future<int> > futureVec;  // vector<future<int> >
@@ -764,7 +769,10 @@ void ConstructIndex::save_index() {
     std::ofstream outFile(outputGraphFileName_, std::ios::binary);
 
     if (outFile.is_open()) {
-        /* -------------------------------------------------- mKmerLen and mVcfPloidy -------------------------------------------------- */
+        /* -------------------------------------------------- mGraphBaseNum, mKmerLen and mVcfPloidy -------------------------------------------------- */
+        // Write the total number of bases in the Genome Graph
+        outFile.write(reinterpret_cast<const char*>(&mGraphBaseNum), sizeof(uint64_t));
+
         // Write the length of k-mer and mVcfPloidy
         outFile.write(reinterpret_cast<const char*>(&mKmerLen), sizeof(uint32_t));
         outFile.write(reinterpret_cast<const char*>(&mVcfPloidy), sizeof(uint32_t));
@@ -911,6 +919,10 @@ void ConstructIndex::load_index() {
 
     if (inFile.is_open()) {
         /* -------------------------------------------------- mKmerLen and mVcfPloidy -------------------------------------------------- */
+        // Load the total number of bases in the Genome Graph
+        mGraphBaseNum = 0;
+        inFile.read(reinterpret_cast<char*>(&mGraphBaseNum), sizeof(uint64_t));
+
         // load the length of k-mer and mVcfPloidy
         mKmerLen = 0;
         inFile.read(reinterpret_cast<char*>(&mKmerLen), sizeof(uint32_t));
@@ -1164,7 +1176,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
         pair<string, string> upDownSeq = construct_index::find_node_up_down_seq(
             haplotype, 
             gt, 
-            seqTmp.size(), 
+            seqTmp, 
             kmerLen - 1, 
             nodeIter, 
             startNodeMap
@@ -1181,11 +1193,8 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
 
         // Select the lowest frequency k-mer
         map<uint8_t, unordered_set<uint64_t> > freKmerHashSetMapTmp;  // map<frequency, unordered_set<kmerHash> >
-        uint32_t kmerNum = 0;  // 2023/09/15 -> better for plant's genomes
         for (const auto& [frequency, kmerHashSet] : freKmerHashSetMap) {
             freKmerHashSetMapTmp.emplace(frequency, kmerHashSet);
-            
-            kmerNum += kmerHashSet.size();
 
             // Record k-mer with frequency ≥ 2
             if (frequency >= 2) {
@@ -1195,7 +1204,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
             }
             
             // If the value > threshold, the loop exits
-            if (kmerNum > 0) {
+            if (frequency >= 2) {
                 break;
             }
         }
@@ -1236,13 +1245,13 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
 
 /**
  * @author zezhen du
- * @date 2023/08/13
- * @version v1.0.1
+ * @date 2024/02/20
+ * @version v1.0.2
  * @brief find the sequence information corresponding to the haplotype upstream and downstream of the node
  * 
  * @param haplotype       haplotype index
  * @param altGt           genotype
- * @param altLen          ALT sequence length
+ * @param altSeq          ALT sequence
  * @param seqLen          k-mer length - 1
  * @param nodeIter        startNodeMap iterator where the node is located
  * @param startNodeMap    All chromosome node information startNodeMap, index function construction
@@ -1252,11 +1261,16 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
 pair<string, string> construct_index::find_node_up_down_seq(
     const uint16_t & haplotype, 
     const uint16_t& altGt, 
-    uint32_t altLen, 
+    string& altSeq, 
     const uint32_t & seqLen,
     const map<uint32_t, nodeSrt>::iterator & nodeIter, 
     const map<uint32_t, nodeSrt> & startNodeMap
 ) {
+    // start and end position
+    uint32_t altStart = nodeIter->first;
+    uint32_t altEnd = static_cast<uint32_t>(altStart + nodeIter->second.seqVec[0].size() - 1);
+    uint32_t altLen = altSeq.size();
+
     // Upstream/Downstream sequence
     string upSeq;
     string downSeq;
@@ -1264,8 +1278,8 @@ pair<string, string> construct_index::find_node_up_down_seq(
     // Record the previous ALT information
     vector<uint32_t> preQryLenVec = {altLen};
     vector<uint16_t> preGtVec = {altGt};
-    vector<uint32_t> nodeStartVec = {nodeIter->first};
-    vector<uint32_t> nodeEndVec = {static_cast<uint32_t>(nodeIter->first + nodeIter->second.seqVec[0].size() - 1)};
+    vector<uint32_t> preNodeStartVec = {altStart};
+    vector<uint32_t> preNodeEndVec = {altEnd};
     uint32_t preQryLen = altLen;
     uint16_t preGt = altGt;
 
@@ -1281,64 +1295,30 @@ pair<string, string> construct_index::find_node_up_down_seq(
         const nodeSrt& nodeTmp = iterTmp->second;  // node information
         uint32_t nodeEndTmp = nodeStartTmp + nodeTmp.seqVec.at(0).size() - 1;  // end position
 
-        uint16_t gt = (haplotype < nodeTmp.hapGtVec.size()) ? nodeTmp.hapGtVec[haplotype] : 0;
+        uint16_t gtTmp = (haplotype < nodeTmp.hapGtVec.size()) ? nodeTmp.hapGtVec[haplotype] : 0;
 
         // Check if the array is out of bounds
-        if (gt >= nodeTmp.seqVec.size()) {
+        if (gtTmp >= nodeTmp.seqVec.size()) {
             cerr << "[" << __func__ << "::" << getTime() << "] "
-                 << "Error: The node '" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
+                 << "Error: The node '" << altStart << "' lacks sequence information for haplotype " << gtTmp << "." << endl;
             exit(1);
         }
         // Get ALT sequence
-        string seqTmp = nodeTmp.seqVec[gt];
+        string seqTmp = nodeTmp.seqVec[gtTmp];
 
         /* The current version of the nested graph only has coordinates for "ref." Therefore, when nodes intersect and the genotype is 0, the sequence are truncated. */
-        /*
-         |_______________|
-              |______|
-        */
-        while (nodeStartVec.size() > 0 && nodeStartTmp >= nodeStartVec.back() && !seqTmp.empty()) {
-            if (gt == 0) {
-                seqTmp = "";
-                break;
-            } else if (preGtVec.back() == 0 && !upSeq.empty()) {
-                /* 
-                 Check where the coordinates overlap to see if there is a sequence of the genotype, and if so, replace it
-                 Node1: 63124  DEL3  CT  C  0/0
-                 Node2: 63125  SNP134  T  A  1/1 
-                 In the given coordinate situation, at the previous node 
-                 the corresponding genotype was 0, so the sequence corresponded 
-                 to CT. However, at the next node 63125 actually corresponds to 
-                 the sequence A. The following code solves this problem.
-                */
-
-                uint32_t preQryLenTmp = min(nodeEndTmp - nodeStartVec.back() + 1, preQryLenVec.back());
-                upSeq = upSeq.substr(preQryLenTmp, upSeq.size() - preQryLenTmp);
-
-                // delete from vector
-                preQryLenVec.pop_back();
-                preGtVec.pop_back();
-                nodeStartVec.pop_back();
-                nodeEndVec.pop_back();
-
-                continue;
-            }
-
-            break;
-        }
-
         /*
          1.
             |_______________|
          |______|
-        
+
          2.
                 |_______________|
          |______|
         */
-        while (nodeStartVec.size() > 0 && nodeEndTmp >= nodeStartVec.back() && !seqTmp.empty()) {
-            if (gt == 0) {  // If genotype 0, truncate the sequence
-                seqTmp = seqTmp.substr(0, nodeStartVec.back() - nodeStartTmp);
+        while (preNodeStartVec.size() > 0 && nodeEndTmp >= preNodeStartVec.back() && !seqTmp.empty()) {
+            if (gtTmp == 0) {  // If genotype 0, truncate the sequence
+                seqTmp = seqTmp.substr(0, preNodeStartVec.back() - nodeStartTmp);
                 break;
             } else if (preGtVec.back() == 0 && !upSeq.empty()) {
                 /* 
@@ -1352,14 +1332,14 @@ pair<string, string> construct_index::find_node_up_down_seq(
                 */
 
                 // query sequence
-                uint32_t preQryLenTmp = min(nodeEndTmp - nodeStartVec.back() + 1, preQryLenVec.back());
+                uint32_t preQryLenTmp = min(nodeEndTmp - preNodeStartVec.back() + 1, preQryLenVec.back());
                 upSeq = upSeq.substr(preQryLenTmp, upSeq.size() - preQryLenTmp);
 
                 // delete from vector
                 preQryLenVec.pop_back();
                 preGtVec.pop_back();
-                nodeStartVec.pop_back();
-                nodeEndVec.pop_back();
+                preNodeStartVec.pop_back();
+                preNodeEndVec.pop_back();
 
                 continue;
             }
@@ -1369,11 +1349,11 @@ pair<string, string> construct_index::find_node_up_down_seq(
         if (seqTmp.empty()) {continue;};
         
         // Update coordinates
-        nodeStartVec.push_back(nodeStartTmp);
-        nodeEndVec.push_back(nodeEndTmp);
+        preNodeStartVec.push_back(nodeStartTmp);
+        preNodeEndVec.push_back(nodeEndTmp);
 
         if (debugConstruct) {
-            cerr << "UP - Start:" << nodeStartTmp << ", GT:" << +gt << ", sequence:" << seqTmp << endl;
+            cerr << "UP - Start:" << nodeStartTmp << ", GT:" << +gtTmp << ", sequence:" << seqTmp << endl;
         }
 
         int64_t remainingLen = seqLen - upSeq.size();
@@ -1387,7 +1367,7 @@ pair<string, string> construct_index::find_node_up_down_seq(
             preQryLenVec.push_back(preQryLen);
         }
 
-        preGt = gt;
+        preGt = gtTmp;
         preGtVec.push_back(preGt);
     }
 
@@ -1397,26 +1377,65 @@ pair<string, string> construct_index::find_node_up_down_seq(
     preGt = altGt;
     preQryLenVec = {altLen};
     preGtVec = {altGt};
-    nodeStartVec = {nodeIter->first};
-    nodeEndVec = {static_cast<uint32_t>(nodeIter->first + nodeIter->second.seqVec[0].size() - 1)};
+    preNodeStartVec = {altStart};
+    preNodeEndVec = {altEnd};
 
     // Iterate over the next node's start sequence
     while ((downSeq.size() < seqLen) && (++iterTmp != startNodeMap.end())) {
         const uint32_t& nodeStartTmp = iterTmp->first;  // start position
         const nodeSrt& nodeTmp = iterTmp->second;  // node information
-        uint32_t nodeEndTmp = nodeStartTmp + nodeTmp.seqVec[0].size() - 1;  // end position
+        uint32_t nodeLenTmp = nodeTmp.seqVec[0].size();  // node length
+        uint32_t nodeEndTmp = nodeStartTmp + nodeLenTmp - 1;  // end position
 
-        uint16_t gt = (haplotype < nodeTmp.hapGtVec.size()) ? nodeTmp.hapGtVec[haplotype] : 0;  // the genotype in this node
+        uint16_t gtTmp = (haplotype < nodeTmp.hapGtVec.size()) ? nodeTmp.hapGtVec[haplotype] : 0;  // the genotype in this node
 
         // Check if the array is out of bounds
-        if (gt >= nodeTmp.seqVec.size()) {
+        if (gtTmp >= nodeTmp.seqVec.size()) {
             cerr << "[" << __func__ << "::" << getTime() << "] "
-                 << "Error: The node '" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
+                 << "Error: The node '" << altStart << "' lacks sequence information for haplotype " << gtTmp << "." << endl;
             exit(1);
         }
         // Get ALT sequence
-        string seqTmp = nodeTmp.seqVec[gt];
-        
+        string seqTmp = nodeTmp.seqVec[gtTmp];
+
+        /*
+         If the original node represents a deletion or insertion, and the genotype of the haplotype is either 0 (deletion) or 1 (insertion), 
+         but the haplotype also contains a SNP on the deletion or insertion, then the deletion corresponding to the haplotype should be replaced. 
+         The corresponding position is the SNP. For example:
+
+         chr1    17008   Deletion        TTTTTTT       T       0/1
+         chr1    17009   SNP     T       A       1/1
+         1.
+            |_______________|
+                |______|
+         2.
+            |_______________|
+                     |______|
+         3.
+            |_______________|
+                |_______________|
+         4.
+            |_______________|
+                            |_______________|
+
+         In the given coordinate situation, the sequence of haplotype 1 corresponds to TTTTTTT. 
+         However, in the subsequent node, 17009 actually corresponds to 'A', hence the sequence should be 'TATTTTT'. 
+         The following code addresses this issue.
+        */
+        // 1 and 2. The end of the next node is less than the start of the current node (SNP).
+        if (altGt == 0 && gtTmp != 0 && nodeEndTmp <= altEnd && seqTmp.size() == 1 && nodeLenTmp == 1) {
+            if (debugConstruct) {
+                cerr << "REPLACE - " << "altSeq.size:" << altSeq.size() << ", altStart:" << altStart << ", altEnd:" << altEnd 
+                    << ", nodeStartTmp:" << nodeStartTmp << ", nodeEndTmp:" << nodeEndTmp 
+                    << ", replaceStartTmp:" << nodeStartTmp - altStart << ", replaceLenTmp:" << nodeLenTmp << ", seqTmp:" << seqTmp << endl;
+            }
+
+            altSeq.replace(nodeStartTmp - altStart, nodeLenTmp, seqTmp);
+        }
+        // 3 and 4. The end of the next node is greater than the end of the current node.
+
+        // Check if nodes intersect
+        if (nodeEndTmp <= altEnd) continue;
 
         /* The current version of the nested graph only has coordinates for "ref." Therefore, when nodes intersect and the genotype is 0, the sequence are truncated. */
         // Check if nodes intersect
@@ -1424,8 +1443,8 @@ pair<string, string> construct_index::find_node_up_down_seq(
          |_______________|
                |______|
         */
-        while (nodeEndVec.size() > 0 && nodeEndTmp <= nodeEndVec.back() && !seqTmp.empty()) {  // If the end position of the next node is less than the current node, proceed to the next iteration directly.
-            if (gt == 0) {
+        while (preNodeEndVec.size() > 0 && nodeEndTmp <= preNodeEndVec.back() && !seqTmp.empty()) {  // If the end position of the next node is less than the current node, proceed to the next iteration directly.
+            if (gtTmp == 0) {
                 seqTmp = "";
                 break;
             } else if (preGt == 0 && !downSeq.empty()) {
@@ -1439,14 +1458,14 @@ pair<string, string> construct_index::find_node_up_down_seq(
                  the sequence A. The following code solves this problem.
                 */
 
-                uint32_t preQryLenTmp = min(nodeEndVec.back() - nodeStartTmp + 1, preQryLenVec.back());
+                uint32_t preQryLenTmp = min(preNodeEndVec.back() - nodeStartTmp + 1, preQryLenVec.back());
                 downSeq = downSeq.substr(0, downSeq.size() - preQryLenTmp);
 
                 // delete from vector
                 preQryLenVec.pop_back();
                 preGtVec.pop_back();
-                nodeStartVec.pop_back();
-                nodeEndVec.pop_back();
+                preNodeStartVec.pop_back();
+                preNodeEndVec.pop_back();
 
                 continue;
             }
@@ -1462,30 +1481,34 @@ pair<string, string> construct_index::find_node_up_down_seq(
          |_______________|
                          |_______________|
         */
-        while (nodeEndVec.size() > 0 && nodeStartTmp <= nodeEndVec.back() && !seqTmp.empty()) {  // The end of this node is greater than the start of the next node.
-            if (gt == 0) {  // When referring to the sequence, update the sequence.
-                seqTmp = seqTmp.substr(nodeEndVec.back() - nodeStartTmp + 1, nodeEndTmp - nodeEndVec.back());  // Truncate the sequence of ref.
+        while (preNodeEndVec.size() > 0 && nodeStartTmp <= preNodeEndVec.back() && !seqTmp.empty()) {  // The end of this node is greater than the start of the next node.
+            if (gtTmp == 0) {  // When referring to the sequence, update the sequence.
+                seqTmp = seqTmp.substr(preNodeEndVec.back() - nodeStartTmp + 1, nodeEndTmp - preNodeEndVec.back());  // Truncate the sequence of ref.
                 break;
             } else if (preGt == 0 && !downSeq.empty()) {
                 /* 
-                 Check where the coordinates overlap to see if there is a sequence of the genotype, and if so, replace it
-                 Node1: 63124  DEL3  CT  C  0/0
-                 Node2: 63125  SNP134  T  A  1/1 
-                 In the given coordinate situation, at the previous node 
-                 the corresponding genotype was 0, so the sequence corresponded 
-                 to CT. However, at the next node 63125 actually corresponds to 
-                 the sequence A. The following code solves this problem.
+                 This section of the code checks for overlapping coordinates to determine if there is a sequence corresponding to the genotype. 
+                 If such a sequence exists, it replaces it. Here's an example to illustrate this:
+
+                 Consider two nodes:
+                 Node1: At position 63124, there's a deletion (DEL3) changing 'CT' to 'C'. The genotype is 0/0.
+                 Node2: At position 63125, there's a single nucleotide polymorphism (SNP134) changing 'T' to 'A'. The genotype is 1/1.
+
+                 In this scenario, the genotype at Node1 is 0, so the sequence corresponds to 'CT'. 
+                 However, at Node2 (position 63125), the sequence actually corresponds to 'A', not 'T'. 
+
+                 The code below addresses this discrepancy by replacing the sequence at the overlapping coordinates, ensuring the sequence accurately reflects the genotype at each position.
                 */
 
                 // query sequence
-                uint32_t preQryLenTmp = min(nodeEndVec.back() - nodeStartTmp + 1, preQryLenVec.back());
+                uint32_t preQryLenTmp = min(preNodeEndVec.back() - nodeStartTmp + 1, preQryLenVec.back());
                 downSeq = downSeq.substr(0, downSeq.size() - preQryLenTmp);
 
                 // delete from vector
                 preQryLenVec.pop_back();
                 preGtVec.pop_back();
-                nodeStartVec.pop_back();
-                nodeEndVec.pop_back();
+                preNodeStartVec.pop_back();
+                preNodeEndVec.pop_back();
 
                 continue;
             }
@@ -1495,11 +1518,11 @@ pair<string, string> construct_index::find_node_up_down_seq(
        if (seqTmp.empty()) {continue;};
 
         // update coordinates
-        nodeStartVec.push_back(nodeStartTmp);
-        nodeEndVec.push_back(nodeEndTmp);
+        preNodeStartVec.push_back(nodeStartTmp);
+        preNodeEndVec.push_back(nodeEndTmp);
 
         if (debugConstruct) {
-            cerr << "DOWN - Start:" << nodeStartTmp << ", GT:" << +gt << ", sequence:" << seqTmp << endl;
+            cerr << "DOWN - Start:" << nodeStartTmp << ", GT:" << +gtTmp << ", sequence:" << seqTmp << endl;
         }
 
         int64_t remainingLen = seqLen - downSeq.size();
@@ -1513,7 +1536,7 @@ pair<string, string> construct_index::find_node_up_down_seq(
             preQryLenVec.push_back(preQryLen);
         }
 
-        preGt = gt;
+        preGt = gtTmp;
         preGtVec.push_back(preGt);
     }
 
@@ -1545,8 +1568,7 @@ int construct_index::graph2node_run(
     vector<uint64_t>& kmerHashVec, 
     vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec, 
     const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
-)
-{
+) {
     vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator> GraphKmerHashHapStrMapIterVecTmp;  // Iterator pointing to mGraphKmerHashHapStrMap, vector<iter>
 
     // If there are few node-specific k-mers, they will not be filtered (SNPs, Indels).
