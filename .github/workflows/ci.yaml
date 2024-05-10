@@ -31,6 +31,7 @@ jobs:
 
     - name: Install CUDA Toolkit
       run: |
+        apt-key adv --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC
         # Download and install CUDA Toolkit
         wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
         sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
