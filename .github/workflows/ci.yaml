@@ -31,7 +31,17 @@ jobs:
 
     - name: Install CUDA Toolkit
       run: |
-        apt-key adv --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC
+        # Create a temporary directory in the user's home directory
+        mkdir -p ~/temp_trusted_gpg
+        export GNUPGHOME=~/temp_trusted_gpg
+    
+        # Import NVIDIA GPG key
+        gpg --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC
+        gpg --export --armor A4B469963BF863CC | sudo apt-key add -
+    
+        # Cleanup temporary directory
+        rm -rf ~/temp_trusted_gpg
+
         # Download and install CUDA Toolkit
         wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
         sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
