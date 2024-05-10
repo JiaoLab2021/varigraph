@@ -22,7 +22,7 @@ jobs:
         submodules: recursive
 
     - name: Set up CMake ${{ matrix.cmake-version }}
-      uses: lukka/get-cmake@v1
+      uses: cmake/setup-cmake@v1
       with:
         cmake-version: ${{ matrix.cmake-version }}
 

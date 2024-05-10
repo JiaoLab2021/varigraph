@@ -1,5 +1,8 @@
 # varigraph
 
+[![GitHub last commit](https://img.shields.io/github/last-commit/JiaoLab2021/varigraph.svg?label=Last%20commit&logo=github&style=flat)](https://github.com/JiaoLab2021/varigraph/releases)
+[![Build Status](https://github.com/JiaoLab2021/varigraph/actions/workflows/ci.yaml/badge.svg)](https://github.com/JiaoLab2021/varigraph/actions)
+
 ## Introduction
 A fast and resource-efficient genome graph genotyping tool
 
