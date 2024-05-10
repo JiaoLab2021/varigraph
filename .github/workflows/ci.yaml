@@ -57,9 +57,6 @@ jobs:
 
     - name: Configure and build project
       run: |
-        mkdir build
-        cd build
-        # cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDAToolkit_ROOT=${CUDAToolkit_ROOT} -DCUDA_TOOLKIT_ROOT_DIR=${CUDAToolkit_ROOT}
         cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDA_ARCHITECTURES=75 -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
         make
 
