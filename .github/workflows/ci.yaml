@@ -32,9 +32,16 @@ jobs:
     - name: Install CUDA Toolkit if needed
       if: matrix.compiler == 'gcc-9'
       run: |
-        # Install CUDA Toolkit if needed
-        # Additional steps for installing CUDA Toolkit if needed
-        export CUDAToolkit_ROOT=/path/to/cuda/toolkit # Set the CUDA Toolkit root directory
+        # Download and install CUDA Toolkit
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+        sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
+        sudo apt-key adv --fetch-keys https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/7fa2af80.pub
+        sudo add-apt-repository "deb https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/ /"
+        sudo apt-get update
+        sudo apt-get -y install cuda
+
+        # Set CUDA Toolkit root directory
+        export CUDAToolkit_ROOT=/usr/local/cuda
 
     - name: Configure and build project
       run: |
