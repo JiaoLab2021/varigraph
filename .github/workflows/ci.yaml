@@ -30,9 +30,9 @@ jobs:
         # Additional steps for installing CUDA Toolkit if needed
 
     - name: Set up CMake ${{ matrix.cmake-version }}
-      uses: lukka/get-cmake@v1
-      with:
-        cmake-version: ${{ matrix.cmake-version }}
+      run: |
+        sudo apt-get install -y cmake=${{ matrix.cmake-version }}.*
+        cmake --version
 
     - name: Install CUDA Toolkit if needed
       if: matrix.compiler == 'gcc-9'
