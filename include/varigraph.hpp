@@ -16,7 +16,7 @@ using namespace std;
 
 class Varigraph
 {
-private:
+protected:
     // input file name
     const string& refFileName_;  // refgenome files
     const string& vcfFileName_;  // The name of the input VCF file.
@@ -45,7 +45,9 @@ private:
 
     const uint32_t& threads_;  // the thread number
 
-    ConstructIndex* ConstructIndexClassPtr_;  // Record the index of graph and reference genome
+    const float& minSupportingReads_;  // the minimum number of supporting reads for a variant
+
+    ConstructIndex* ConstructIndexClassPtr_ = nullptr;  // Record the index of graph and reference genome
 
     map<string, map<uint32_t, string> > vcfInfoMap_;  // Store VCF file information
 
@@ -70,9 +72,15 @@ public:
         const string& transitionProType, 
         const bool& svGenotypeBool, 
         const bool& debug, 
-        const uint32_t& threads
+        const uint32_t& threads, 
+        const float& minSupportingReads
     );
-    ~Varigraph();
+    ~Varigraph() {
+        if (ConstructIndexClassPtr_ != nullptr) {
+            delete ConstructIndexClassPtr_;
+            ConstructIndexClassPtr_ = nullptr;
+        }
+    }
 
 
     /**

@@ -65,7 +65,7 @@ void FastqKmer::build_fastq_index() {
 void FastqKmer::fastq_file_open(
     const string & fastqFileName
 ) {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from read: " << fastqFileName << endl;  // print log
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from read on CPU: " << fastqFileName << endl;  // print log
 
     // Save the result of multithreading
     vector<future<vector<uint64_t> > > hashVecVec;  // vector<kmerVec>
@@ -197,10 +197,7 @@ void FastqKmer::fastq_file_open(
  * 
  * @return void
 **/
-void FastqKmer::save_index(
-    const string & outputFileName
-)
-{
+void FastqKmer::save_index(const string & outputFileName) {
     // log
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Reads index saved to file: " << outputFileName << endl;
 
@@ -318,8 +315,7 @@ vector<uint64_t> fastq_kmer::fastq_file_open_run(
     vector<string> sequenceVec, 
     uint32_t kmerLen, 
     const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
-)
-{
+) {
     // A temporary list of hash values
     vector<uint64_t> hashVec;
 

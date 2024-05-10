@@ -21,22 +21,15 @@ Varigraph::Varigraph(
     const string& transitionProType, 
     const bool& svGenotypeBool, 
     const bool& debug, 
-    const uint32_t& threads
+    const uint32_t& threads, 
+    const float& minSupportingReads
 ) : refFileName_(refFileName), vcfFileName_(vcfFileName), fastqFileNameVec_(fastqFileNameVec), inputGraphFileName_(inputGraphFileName), 
     outputGraphFileName_(outputGraphFileName), outputFileName_(outputFileName), 
     fastMode_(fastMode), kmerLen_(kmerLen), sampleName_(sampleName), sampleType_(sampleType), samplePloidy_(samplePloidy), vcfPloidy_(vcfPloidy), haploidNum_(haploidNum), 
-    chrLenThread_(chrLenThread), transitionProType_(transitionProType), svGenotypeBool_(svGenotypeBool), debug_(debug), threads_(threads) {
+    chrLenThread_(chrLenThread), transitionProType_(transitionProType), svGenotypeBool_(svGenotypeBool), debug_(debug), threads_(threads), minSupportingReads_(minSupportingReads) {
     // cerr
     std::cerr.imbue(std::locale(""));  // Thousandth output
 }
-
-
-Varigraph::~Varigraph() {
-    if (ConstructIndexClassPtr_ != nullptr) {
-        delete ConstructIndexClassPtr_;
-        ConstructIndexClassPtr_ = nullptr;
-    }
-};
 
 
 /**
@@ -47,8 +40,7 @@ Varigraph::~Varigraph() {
  * 
  * @return void
 **/
-void Varigraph::construct()
-{
+void Varigraph::construct() {
     ConstructIndexClassPtr_ = new ConstructIndex(
         refFileName_, 
         vcfFileName_, 
@@ -315,7 +307,7 @@ tuple<uint8_t, uint8_t> Varigraph::get_hom_kmer_c(const map<uint8_t, uint64_t>& 
  * @return void
 **/
 void Varigraph::cal_hap_kmer_cov(const uint8_t& homCoverage) {
-    hapKmerCoverage_ = (homCoverage > 0 && samplePloidy_ > 0) ? static_cast<float>(homCoverage) / static_cast<float>(vcfPloidy_) : ReadDepth_ / static_cast<float>(vcfPloidy_);
+    hapKmerCoverage_ = (homCoverage > 0 && samplePloidy_ > 0) ? static_cast<float>(homCoverage) / static_cast<float>(samplePloidy_) : ReadDepth_ / static_cast<float>(samplePloidy_);
 }
 
 /**
@@ -388,6 +380,7 @@ void Varigraph::genotype()
         transitionProType_, 
         svGenotypeBool_, 
         threads_, 
-        debug_
+        debug_, 
+        minSupportingReads_
     );
 }

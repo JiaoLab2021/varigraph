@@ -105,9 +105,8 @@ struct nodeSrt {
 };
 
 
-class ConstructIndex
-{
-private:
+class ConstructIndex {
+protected:
     // input file names
     string refFileName_;
     string vcfFileName_;
@@ -145,7 +144,7 @@ public:
     unordered_map<string, uint32_t> mFastaLenMap;  // map<chromosome, sequence length>
     uint64_t mGenomeSize = 0;  // Reference genome size
 
-    BloomFilter* mbf;  // The Counting Bloom filter of reference genome's k-mers informations
+    BloomFilter* mbf = nullptr;  // The Counting Bloom filter of reference genome's k-mers informations
 
     unordered_map<uint16_t, tuple<uint16_t, uint16_t> > mHapIdxQRmap;  // map<hapIdx, tuple<quotient, remainder> >
 

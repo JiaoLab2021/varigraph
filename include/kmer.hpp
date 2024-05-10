@@ -11,13 +11,12 @@
 
 #include "counting_bloom_filter.hpp"
 #include "construct_index.hpp"
+#include "seq_nt4_table.hpp"
+#include "hash64.hpp"
 
 using namespace std;
 
 namespace kmerBit{
-	uint64_t hash64(uint64_t key, uint64_t mask);
-
-
 	/**
 	 * Find symmetric (k)-kmer on a DNA sequence (Counting Bloom Filter)
 	 *

@@ -25,8 +25,8 @@ ConstructIndex::ConstructIndex(
     const bool& debug, 
     const uint32_t& threads
 ) : refFileName_(refFileName), vcfFileName_(vcfFileName), inputGraphFileName_(inputGraphFileName), outputGraphFileName_(outputGraphFileName), 
-    fastMode_(fastMode), mKmerLen(kmerLen), mVcfPloidy(vcfPloidy), threads_(threads)
-{
+    fastMode_(fastMode), mKmerLen(kmerLen), mVcfPloidy(vcfPloidy), threads_(threads) {
+
     mHapMap[0] = "reference";
 
     // debug
@@ -34,8 +34,7 @@ ConstructIndex::ConstructIndex(
     if (debugConstruct) threads_ = 1;
 }
 
-ConstructIndex::~ConstructIndex()
-{
+ConstructIndex::~ConstructIndex() {
     if (mbf != nullptr) {
         delete mbf;  // Release the memory occupied by the Counting Bloom filter
         mbf = nullptr;
@@ -50,8 +49,7 @@ ConstructIndex::~ConstructIndex()
  * 
  * @return void
 **/
-void ConstructIndex::clear_mbf()
-{
+void ConstructIndex::clear_mbf() {
     unordered_map<string, string>().swap(mFastaSeqMap);
     if (mbf != nullptr) {
         delete mbf;
@@ -148,9 +146,8 @@ void ConstructIndex::build_fasta_index()
  * 
  * @return void
 **/
-void ConstructIndex::make_mbf()
-{
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Computing k-mer frequency in the reference genome ...\n";
+void ConstructIndex::make_mbf() {
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Initiating computation of k-mer frequencies in the reference genome on CPU ...\n";
 
     /* *************************************************** making or load *************************************************** */
     uint64_t bfSize = mGenomeSize - mKmerLen + 1;
@@ -190,6 +187,8 @@ void ConstructIndex::make_mbf()
 void ConstructIndex::construct()
 {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Constructing ...\n";  // print log
+
+    mGraphBaseNum += mGenomeSize;  // The number of bases in the graph
 
     // Record the position of the previous node
     uint32_t tmpRefStart = 0;
@@ -234,8 +233,8 @@ void ConstructIndex::construct()
             mVcfHead += "##FORMAT=<ID=GT,Number=1,Type=String,Description=\"Genotype\">\n";
             mVcfHead += "##FORMAT=<ID=GQ,Number=1,Type=Float,Description=\"Genotype quality (phred-scaled 1 - max(GPP))\">\n";
             mVcfHead += "##FORMAT=<ID=GPP,Number=1,Type=String,Description=\"Genotype posterior probabilities\">\n";
-            mVcfHead += "##FORMAT=<ID=NAK,Number=R,Type=Float,Description=\"Number of allele k-mers\">\n";
-            mVcfHead += "##FORMAT=<ID=CAK,Number=R,Type=Float,Description=\"Coverage of allele k-mers\">\n";
+            mVcfHead += "##FORMAT=<ID=NAK,Number=.,Type=Float,Description=\"Number of allele k-mers\">\n";
+            mVcfHead += "##FORMAT=<ID=CAK,Number=.,Type=Float,Description=\"Coverage of allele k-mers\">\n";
             mVcfHead += "##FORMAT=<ID=UK,Number=1,Type=Integer,Description=\"Total number of unique kmers, capped at 255\">\n";
 
             mVcfHead += "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT";  // Store VCF file comment line
@@ -337,7 +336,6 @@ void ConstructIndex::construct()
                     nodeSrt& mGraphMapForChrForStart = mGraphMap[tmpChromosome][preRefStart];
 
                     mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
-                    mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
                     mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
                 }
 
@@ -353,7 +351,6 @@ void ConstructIndex::construct()
                     nodeSrt& mGraphMapForChrForStart = mGraphMap[chromosome][preRefStart];
 
                     mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
-                    mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
                     mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
                 }
             } else {  // Otherwise the node is built from the sequence in the middle of the vcf
@@ -374,7 +371,6 @@ void ConstructIndex::construct()
                     nodeSrt& mGraphMapForChrForStart = mGraphMap[chromosome][preRefStart];
 
                     mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
-                    mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
                     mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
                 }
             }
@@ -385,7 +381,6 @@ void ConstructIndex::construct()
 
             // Add the ref node first
             mGraphMapForChrForStart.seqVec.push_back(refSeq);  // Add to graph, 0
-            mGraphBaseNum += refSeq.size();  // The number of bases in the graph
             mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
 
             // qrySeqVec
@@ -460,7 +455,6 @@ void ConstructIndex::construct()
         nodeSrt& mGraphMapForChrForStart = mGraphMap[tmpChromosome][preRefStart];
 
         mGraphMapForChrForStart.seqVec.push_back(preRefSeq);  // Add to graph, 0
-        mGraphBaseNum += preRefSeq.size();  // The number of bases in the graph
         mGraphMapForChrForStart.hapGtVec.push_back(0);  // haplotype information
     }
 
@@ -595,7 +589,8 @@ void ConstructIndex::vcf_construct(
  * @return void
 **/
 void ConstructIndex::index() {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Building the graph index ...\n";  // print log
+    // Log the start of the graph index construction on the CPU
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Initiating the construction of the graph index on CPU ...\n";
 
     // Save the results of multiple threads
     vector<future<tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >, map<uint64_t, uint8_t> > > > futureVec;  // nodeIter, KmerHapBitMap, kmerHashFreMap
@@ -690,7 +685,7 @@ void ConstructIndex::index() {
 
         // Print log every 5% of tasks
         if (taskProcessNum > 0 && taskProcessNum % (taskNum / 20) == 0) {
-            cerr << "[" << __func__ << "::" << getTime() << "] " << std::fixed << std::setprecision(0) << "Indexing progress: " << std::setw(3) <<  static_cast<double>(taskProcessNum) / taskNum * 100.0 << "%\n";
+            cerr << "[" << __func__ << "::" << getTime() << "] " << std::fixed << std::setprecision(0) << "Indexing progress: " << std::setw(3) << static_cast<double>(taskProcessNum) / taskNum * 100.0 << "%\n";
         }
     }
 
@@ -767,141 +762,143 @@ void ConstructIndex::save_index() {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Genome Graph index saved to file: " << outputGraphFileName_ << endl;
 
     std::ofstream outFile(outputGraphFileName_, std::ios::binary);
-
-    if (outFile.is_open()) {
-        /* -------------------------------------------------- mGraphBaseNum, mKmerLen and mVcfPloidy -------------------------------------------------- */
-        // Write the total number of bases in the Genome Graph
-        outFile.write(reinterpret_cast<const char*>(&mGraphBaseNum), sizeof(uint64_t));
-
-        // Write the length of k-mer and mVcfPloidy
-        outFile.write(reinterpret_cast<const char*>(&mKmerLen), sizeof(uint32_t));
-        outFile.write(reinterpret_cast<const char*>(&mVcfPloidy), sizeof(uint32_t));
-
-        /* -------------------------------------------------- mVcfHead and mVcfInfoMap  -------------------------------------------------- */
-        // Write mVcfHead
-        uint32_t vcfHeadLength = mVcfHead.length();
-        outFile.write(reinterpret_cast<const char*>(&vcfHeadLength), sizeof(uint32_t));
-        outFile.write(mVcfHead.data(), vcfHeadLength);
-
-        // Write mVcfInfoMap
-        uint32_t mVcfInfoMapSize = mVcfInfoMap.size();
-        outFile.write(reinterpret_cast<const char*>(&mVcfInfoMapSize), sizeof(uint32_t));
-
-        for (const auto& chrInfo : mVcfInfoMap) {
-            const std::string& chrName = chrInfo.first;
-            uint32_t chrNameLength = chrName.length();
-            outFile.write(reinterpret_cast<const char*>(&chrNameLength), sizeof(uint32_t));
-            outFile.write(chrName.data(), chrNameLength);
-
-            // chromosome length
-            uint32_t chrLen = mFastaLenMap.at(chrName);
-            outFile.write(reinterpret_cast<const char*>(&chrLen), sizeof(uint32_t));
-
-            const std::map<uint32_t, std::vector<std::string> >& startVecMap = chrInfo.second;
-            uint32_t startVecMapSize = startVecMap.size();
-            outFile.write(reinterpret_cast<const char*>(&startVecMapSize), sizeof(uint32_t));
-
-            for (const auto& startVec : startVecMap) {
-                uint32_t start = startVec.first;
-                const std::vector<std::string>& infoVec = startVec.second;
-                uint32_t infoVecSize = infoVec.size();
-                outFile.write(reinterpret_cast<const char*>(&start), sizeof(uint32_t));
-                outFile.write(reinterpret_cast<const char*>(&infoVecSize), sizeof(uint32_t));
-
-                for (const auto& info : infoVec) {
-                    uint32_t infoLength = info.length();
-                    outFile.write(reinterpret_cast<const char*>(&infoLength), sizeof(uint32_t));
-                    outFile.write(info.data(), infoLength);
-                }
-            }
-        }
-
-        /* -------------------------------------------------- mHapNum and mHapMap  -------------------------------------------------- */
-        outFile.write(reinterpret_cast<const char*>(&mHapNum), sizeof(uint16_t));
-
-        for (const auto& hapEntry : mHapMap) {
-            uint16_t hapIdx = hapEntry.first;
-            const std::string& hapName = hapEntry.second;
-
-            outFile.write(reinterpret_cast<const char*>(&hapIdx), sizeof(uint16_t));
-            uint32_t hapNameLength = hapName.length();
-            outFile.write(reinterpret_cast<const char*>(&hapNameLength), sizeof(uint32_t));
-            outFile.write(reinterpret_cast<const char*>(hapName.data()), hapNameLength);
-        }
-
-        /* -------------------------------------------------- mGraphMap  -------------------------------------------------- */
-        // Write the size of the outer map.
-        uint32_t ChrNum = mGraphMap.size();
-        outFile.write(reinterpret_cast<const char*>(&ChrNum), sizeof(uint32_t));
-
-        for (const auto& chrNodes : mGraphMap) {  // map<chr, map<nodeStart, nodeSrt> >
-            // Write the chromosome name and number of nodes in this chromosome.
-            const std::string& chrName = chrNodes.first;
-            uint32_t numNodes = chrNodes.second.size();
-
-            uint32_t chrNameLength = chrName.length();
-            outFile.write(reinterpret_cast<const char*>(&chrNameLength), sizeof(uint32_t));
-            outFile.write(chrName.data(), chrNameLength);
-            outFile.write(reinterpret_cast<const char*>(&numNodes), sizeof(uint32_t));
-
-            for (const auto& nodeData : chrNodes.second) {  // map<nodeStart, nodeSrt>
-                // Write the node start position and its data.
-                uint32_t nodeStartPos = nodeData.first;
-                const nodeSrt& nodeSrtData = nodeData.second;
-
-                outFile.write(reinterpret_cast<const char*>(&nodeStartPos), sizeof(uint32_t));
-
-                // Write the sequence information.
-                uint32_t numSeqEntries = nodeSrtData.seqVec.size();
-                outFile.write(reinterpret_cast<const char*>(&numSeqEntries), sizeof(uint32_t));
-
-                for (const auto& seq : nodeSrtData.seqVec) {
-                    uint32_t seqLen = seq.length();
-                    outFile.write(reinterpret_cast<const char*>(&seqLen), sizeof(uint32_t));
-                    outFile.write(reinterpret_cast<const char*>(seq.data()), seqLen);
-                }
-
-                // Write the genotype information.
-                uint32_t numGtEntries = nodeSrtData.hapGtVec.size();
-                outFile.write(reinterpret_cast<const char*>(&numGtEntries), sizeof(uint32_t));
-                outFile.write(reinterpret_cast<const char*>(&nodeSrtData.hapGtVec[0]), sizeof(uint16_t) * numGtEntries);
-
-                // Write the k-mer hash information.
-                uint32_t numKmerHashEntries = nodeSrtData.kmerHashVec.size();
-                outFile.write(reinterpret_cast<const char*>(&numKmerHashEntries), sizeof(uint32_t));
-                outFile.write(reinterpret_cast<const char*>(&nodeSrtData.kmerHashVec[0]), sizeof(uint64_t) * numKmerHashEntries);
-            }
-        }
-
-        /* -------------------------------------------------- mGraphKmerHashHapStrMap  -------------------------------------------------- */
-        // Read base
-        uint64_t ReadBase = 0;
-        outFile.write(reinterpret_cast<const char*>(&ReadBase), sizeof(uint64_t));
-
-        for (const auto& kvp : mGraphKmerHashHapStrMap) {
-            const uint64_t kmerHash = kvp.first;
-            const kmerCovFreBitVec& kmerCovFreBitVecStr = kvp.second;
-            const vector<int8_t>& BitVec = kmerCovFreBitVecStr.BitVec;
-            uint64_t BitVecLen = BitVec.size();
-
-            // Write kmerHash
-            outFile.write(reinterpret_cast<const char*>(&kmerHash), sizeof(uint64_t));
-
-            // Write kmerCov and kmerFre
-            outFile.write(reinterpret_cast<const char*>(&kmerCovFreBitVecStr.c), sizeof(uint8_t));
-            outFile.write(reinterpret_cast<const char*>(&kmerCovFreBitVecStr.f), sizeof(uint8_t));
-
-            // Write BitVec
-            outFile.write(reinterpret_cast<const char*>(&BitVecLen), sizeof(uint64_t));
-            for (const int8_t& Bit : BitVec) {
-                outFile.write(reinterpret_cast<const char*>(&Bit), sizeof(int8_t));
-            }
-        }
-    } else {
+    if (!outFile.is_open()) {
         cerr << "[" << __func__ << "::" << getTime() << "] "
             << "'" << outputGraphFileName_ << "': No such file or directory." << endl;
         exit(1);
     }
+
+    /* -------------------------------------------------- mGraphBaseNum, mKmerLen and mVcfPloidy -------------------------------------------------- */
+    // Write the total number of bases in the Genome Graph
+    outFile.write(reinterpret_cast<const char*>(&mGraphBaseNum), sizeof(uint64_t));
+
+    // Write the length of k-mer and mVcfPloidy
+    outFile.write(reinterpret_cast<const char*>(&mKmerLen), sizeof(uint32_t));
+    outFile.write(reinterpret_cast<const char*>(&mVcfPloidy), sizeof(uint32_t));
+
+    /* -------------------------------------------------- mVcfHead and mVcfInfoMap  -------------------------------------------------- */
+    // Write mVcfHead
+    uint32_t vcfHeadLength = mVcfHead.length();
+    outFile.write(reinterpret_cast<const char*>(&vcfHeadLength), sizeof(uint32_t));
+    outFile.write(mVcfHead.data(), vcfHeadLength);
+
+    // Write mVcfInfoMap
+    uint32_t mVcfInfoMapSize = mVcfInfoMap.size();
+    outFile.write(reinterpret_cast<const char*>(&mVcfInfoMapSize), sizeof(uint32_t));
+
+    for (const auto& chrInfo : mVcfInfoMap) {
+        const std::string& chrName = chrInfo.first;
+        uint32_t chrNameLength = chrName.length();
+        outFile.write(reinterpret_cast<const char*>(&chrNameLength), sizeof(uint32_t));
+        outFile.write(chrName.data(), chrNameLength);
+
+        // chromosome length
+        uint32_t chrLen = mFastaLenMap.at(chrName);
+        outFile.write(reinterpret_cast<const char*>(&chrLen), sizeof(uint32_t));
+
+        const std::map<uint32_t, std::vector<std::string> >& startVecMap = chrInfo.second;
+        uint32_t startVecMapSize = startVecMap.size();
+        outFile.write(reinterpret_cast<const char*>(&startVecMapSize), sizeof(uint32_t));
+
+        for (const auto& startVec : startVecMap) {
+            uint32_t start = startVec.first;
+            const std::vector<std::string>& infoVec = startVec.second;
+            uint32_t infoVecSize = infoVec.size();
+            outFile.write(reinterpret_cast<const char*>(&start), sizeof(uint32_t));
+            outFile.write(reinterpret_cast<const char*>(&infoVecSize), sizeof(uint32_t));
+
+            for (const auto& info : infoVec) {
+                uint32_t infoLength = info.length();
+                outFile.write(reinterpret_cast<const char*>(&infoLength), sizeof(uint32_t));
+                outFile.write(info.data(), infoLength);
+            }
+        }
+    }
+
+    /* -------------------------------------------------- mHapNum and mHapMap  -------------------------------------------------- */
+    outFile.write(reinterpret_cast<const char*>(&mHapNum), sizeof(uint16_t));
+
+    for (const auto& hapEntry : mHapMap) {
+        uint16_t hapIdx = hapEntry.first;
+        const std::string& hapName = hapEntry.second;
+
+        outFile.write(reinterpret_cast<const char*>(&hapIdx), sizeof(uint16_t));
+        uint32_t hapNameLength = hapName.length();
+        outFile.write(reinterpret_cast<const char*>(&hapNameLength), sizeof(uint32_t));
+        outFile.write(reinterpret_cast<const char*>(hapName.data()), hapNameLength);
+    }
+
+    /* -------------------------------------------------- mGraphMap  -------------------------------------------------- */
+    // Write the size of the outer map.
+    uint32_t ChrNum = mGraphMap.size();
+    outFile.write(reinterpret_cast<const char*>(&ChrNum), sizeof(uint32_t));
+
+    for (const auto& chrNodes : mGraphMap) {  // map<chr, map<nodeStart, nodeSrt> >
+        // Write the chromosome name and number of nodes in this chromosome.
+        const std::string& chrName = chrNodes.first;
+        uint32_t numNodes = chrNodes.second.size();
+
+        uint32_t chrNameLength = chrName.length();
+        outFile.write(reinterpret_cast<const char*>(&chrNameLength), sizeof(uint32_t));
+        outFile.write(chrName.data(), chrNameLength);
+        outFile.write(reinterpret_cast<const char*>(&numNodes), sizeof(uint32_t));
+
+        for (const auto& nodeData : chrNodes.second) {  // map<nodeStart, nodeSrt>
+            // Write the node start position and its data.
+            uint32_t nodeStartPos = nodeData.first;
+            const nodeSrt& nodeSrtData = nodeData.second;
+
+            outFile.write(reinterpret_cast<const char*>(&nodeStartPos), sizeof(uint32_t));
+
+            // Write the sequence information.
+            uint32_t numSeqEntries = nodeSrtData.seqVec.size();
+            outFile.write(reinterpret_cast<const char*>(&numSeqEntries), sizeof(uint32_t));
+
+            for (const auto& seq : nodeSrtData.seqVec) {
+                uint32_t seqLen = seq.length();
+                outFile.write(reinterpret_cast<const char*>(&seqLen), sizeof(uint32_t));
+                outFile.write(reinterpret_cast<const char*>(seq.data()), seqLen);
+            }
+
+            // Write the genotype information.
+            uint32_t numGtEntries = nodeSrtData.hapGtVec.size();
+            outFile.write(reinterpret_cast<const char*>(&numGtEntries), sizeof(uint32_t));
+            outFile.write(reinterpret_cast<const char*>(&nodeSrtData.hapGtVec[0]), sizeof(uint16_t) * numGtEntries);
+
+            // Write the k-mer hash information.
+            uint32_t numKmerHashEntries = nodeSrtData.kmerHashVec.size();
+            outFile.write(reinterpret_cast<const char*>(&numKmerHashEntries), sizeof(uint32_t));
+            outFile.write(reinterpret_cast<const char*>(&nodeSrtData.kmerHashVec[0]), sizeof(uint64_t) * numKmerHashEntries);
+        }
+    }
+
+    /* -------------------------------------------------- mGraphKmerHashHapStrMap  -------------------------------------------------- */
+    // Read base
+    uint64_t ReadBase = 0;
+    outFile.write(reinterpret_cast<const char*>(&ReadBase), sizeof(uint64_t));
+
+    for (const auto& kvp : mGraphKmerHashHapStrMap) {
+        const uint64_t kmerHash = kvp.first;
+        const kmerCovFreBitVec& kmerCovFreBitVecStr = kvp.second;
+        const vector<int8_t>& BitVec = kmerCovFreBitVecStr.BitVec;
+        uint64_t BitVecLen = BitVec.size();
+
+        // Write kmerHash
+        outFile.write(reinterpret_cast<const char*>(&kmerHash), sizeof(uint64_t));
+
+        // Write kmerCov and kmerFre
+        outFile.write(reinterpret_cast<const char*>(&kmerCovFreBitVecStr.c), sizeof(uint8_t));
+        outFile.write(reinterpret_cast<const char*>(&kmerCovFreBitVecStr.f), sizeof(uint8_t));
+
+        // Write BitVec
+        outFile.write(reinterpret_cast<const char*>(&BitVecLen), sizeof(uint64_t));
+        for (const int8_t& Bit : BitVec) {
+            outFile.write(reinterpret_cast<const char*>(&Bit), sizeof(int8_t));
+        }
+    }
+
+    // Close the file
+    outFile.close();
 }
 
 
@@ -916,200 +913,202 @@ void ConstructIndex::load_index() {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Genome Graph index loaded from file: " << inputGraphFileName_ << endl;
 
     std::ifstream inFile(inputGraphFileName_, std::ios::binary);
-
-    if (inFile.is_open()) {
-        /* -------------------------------------------------- mKmerLen and mVcfPloidy -------------------------------------------------- */
-        // Load the total number of bases in the Genome Graph
-        mGraphBaseNum = 0;
-        inFile.read(reinterpret_cast<char*>(&mGraphBaseNum), sizeof(uint64_t));
-
-        // load the length of k-mer and mVcfPloidy
-        mKmerLen = 0;
-        inFile.read(reinterpret_cast<char*>(&mKmerLen), sizeof(uint32_t));
-        mVcfPloidy = 0;
-        inFile.read(reinterpret_cast<char*>(&mVcfPloidy), sizeof(uint32_t));
-
-        /* -------------------------------------------------- mVcfHead and mVcfInfoMap  -------------------------------------------------- */
-        // Clear the existing data
-        mVcfHead.clear();
-        mFastaLenMap.clear();
-        mVcfInfoMap.clear();
-
-        // Read mVcfHead
-        uint32_t vcfHeadLength;
-        inFile.read(reinterpret_cast<char*>(&vcfHeadLength), sizeof(uint32_t));
-        mVcfHead.resize(vcfHeadLength);
-        inFile.read(&mVcfHead[0], vcfHeadLength);
-
-        // Read mVcfInfoMap
-        uint32_t mVcfInfoMapSize;
-        inFile.read(reinterpret_cast<char*>(&mVcfInfoMapSize), sizeof(uint32_t));
-
-        for (uint32_t i = 0; i < mVcfInfoMapSize; ++i) {
-            uint32_t chrNameLength;
-            inFile.read(reinterpret_cast<char*>(&chrNameLength), sizeof(uint32_t));
-            std::string chrName;
-            chrName.resize(chrNameLength);
-            inFile.read(&chrName[0], chrNameLength);
-
-            // chromosome length
-            uint32_t chrLen;
-            inFile.read(reinterpret_cast<char*>(&chrLen), sizeof(uint32_t));
-            mFastaLenMap[chrName] = chrLen;
-            mGenomeSize += chrLen;
-
-            uint32_t startVecMapSize;
-            inFile.read(reinterpret_cast<char*>(&startVecMapSize), sizeof(uint32_t));
-
-            std::map<uint32_t, std::vector<std::string> > startVecMap;
-            for (uint32_t j = 0; j < startVecMapSize; ++j) {
-                uint32_t start;
-                inFile.read(reinterpret_cast<char*>(&start), sizeof(uint32_t));
-
-                uint32_t infoVecSize;
-                inFile.read(reinterpret_cast<char*>(&infoVecSize), sizeof(uint32_t));
-
-                std::vector<std::string> infoVec;
-                for (uint32_t k = 0; k < infoVecSize; ++k) {
-                    uint32_t infoLength;
-                    inFile.read(reinterpret_cast<char*>(&infoLength), sizeof(uint32_t));
-                    std::string info;
-                    info.resize(infoLength);
-                    inFile.read(&info[0], infoLength);
-                    infoVec.push_back(std::move(info));
-                }
-                startVecMap[start] = infoVec;
-            }
-            mVcfInfoMap[chrName] = startVecMap;
-        }
-
-        /* -------------------------------------------------- mHapNum and mHapMap  -------------------------------------------------- */
-        inFile.read(reinterpret_cast<char*>(&mHapNum), sizeof(uint16_t));
-
-        // Clear the existing data
-        mHapMap.clear();
-
-        for (uint16_t i = 0; i < mHapNum; ++i) {
-            uint16_t hapIdx;
-            uint32_t hapNameLength;
-
-            inFile.read(reinterpret_cast<char*>(&hapIdx), sizeof(uint16_t));
-            inFile.read(reinterpret_cast<char*>(&hapNameLength), sizeof(uint32_t));
-
-            std::string hapName;
-            hapName.resize(hapNameLength);
-            inFile.read(&hapName[0], hapNameLength);
-
-            // Add the haplotype to the map.
-            mHapMap.emplace(hapIdx, std::move(hapName));
-        }
-
-        /* -------------------------------------------------- mGraphMap  -------------------------------------------------- */
-        // Clear the existing data
-        mGraphMap.clear();
-
-        // Read the size of the outer map.
-        uint32_t chrNum;
-        inFile.read(reinterpret_cast<char*>(&chrNum), sizeof(uint32_t));
-
-        for (uint32_t i = 0; i < chrNum; ++i) {
-            // Read the chromosome name and number of nodes in this chromosome.
-            uint32_t chrNameLength;
-            inFile.read(reinterpret_cast<char*>(&chrNameLength), sizeof(uint32_t));
-
-            std::string chrName;
-            chrName.resize(chrNameLength);
-            inFile.read(&chrName[0], chrNameLength);
-
-            uint32_t numNodes;
-            inFile.read(reinterpret_cast<char*>(&numNodes), sizeof(uint32_t));
-
-            for (uint32_t j = 0; j < numNodes; ++j) {
-                // Read the node start position and its data.
-                uint32_t nodeStartPos;
-                nodeSrt nodeSrtData;
-
-                inFile.read(reinterpret_cast<char*>(&nodeStartPos), sizeof(uint32_t));
-
-                // Read the sequence information.
-                uint32_t numSeqEntries;
-                inFile.read(reinterpret_cast<char*>(&numSeqEntries), sizeof(uint32_t));
-
-                for (uint32_t k = 0; k < numSeqEntries; ++k) {
-                    uint32_t seqLen;
-                    inFile.read(reinterpret_cast<char*>(&seqLen), sizeof(uint32_t));
-
-                    std::string seq;
-                    seq.resize(seqLen);
-                    inFile.read(&seq[0], seqLen);
-                    nodeSrtData.seqVec.push_back(seq);
-                }
-
-                // Read the genotype information.
-                uint32_t numGtEntries;
-                inFile.read(reinterpret_cast<char*>(&numGtEntries), sizeof(uint32_t));
-                nodeSrtData.hapGtVec.resize(numGtEntries);
-                inFile.read(reinterpret_cast<char*>(&nodeSrtData.hapGtVec[0]), sizeof(uint16_t) * numGtEntries);
-
-                // Read the k-mer hash information.
-                uint32_t numKmerHashEntries;
-                inFile.read(reinterpret_cast<char*>(&numKmerHashEntries), sizeof(uint32_t));
-                nodeSrtData.kmerHashVec.resize(numKmerHashEntries);
-                inFile.read(reinterpret_cast<char*>(&nodeSrtData.kmerHashVec[0]), sizeof(uint64_t) * numKmerHashEntries);
-
-                mGraphMap[chrName][nodeStartPos] = move(nodeSrtData);
-            }
-        }
-
-        /* -------------------------------------------------- mGraphKmerHashHapStrMap  -------------------------------------------------- */
-        // Clear the existing data in mGraphKmerHashHapStrMap
-        mGraphKmerHashHapStrMap.clear();
-
-        uint64_t kmerHash;
-        kmerCovFreBitVec kmerCovFreBitVecStr;
-        uint8_t c;
-        uint8_t f;
-        uint64_t BitVecLen;
-
-        // Read base
-        uint64_t ReadBase = 0;
-        // Read base
-        inFile.read(reinterpret_cast<char*>(&ReadBase), sizeof(uint64_t));
-
-        // Read kmerHash, kmerCov, and kmerFre from the file
-        while (inFile.read(reinterpret_cast<char*>(&kmerHash), sizeof(uint64_t))) {
-
-            // Read kmerCov and kmerFre
-            inFile.read(reinterpret_cast<char*>(&c), sizeof(uint8_t));
-            inFile.read(reinterpret_cast<char*>(&f), sizeof(uint8_t));
-
-            // Read BitVec length
-            inFile.read(reinterpret_cast<char*>(&BitVecLen), sizeof(uint64_t));
-
-            // Read BitVec
-            vector<int8_t> BitVec(BitVecLen);
-            for (auto& Bit : BitVec) {
-                inFile.read(reinterpret_cast<char*>(&Bit), sizeof(int8_t));
-            }
-
-            // Store data in the map
-            kmerCovFreBitVecStr.c = c;
-            kmerCovFreBitVecStr.f = f;
-            kmerCovFreBitVecStr.BitVec = BitVec;
-            mGraphKmerHashHapStrMap[kmerHash] = kmerCovFreBitVecStr;
-        }
-    } else {
+    if (!inFile.is_open()) {
         cerr << "[" << __func__ << "::" << getTime() << "] "
             << "'" << inputGraphFileName_ << "': No such file or directory." << endl;
         exit(1);
     }
+
+    /* -------------------------------------------------- mKmerLen and mVcfPloidy -------------------------------------------------- */
+    // Load the total number of bases in the Genome Graph
+    mGraphBaseNum = 0;
+    inFile.read(reinterpret_cast<char*>(&mGraphBaseNum), sizeof(uint64_t));
+
+    // load the length of k-mer and mVcfPloidy
+    mKmerLen = 0;
+    inFile.read(reinterpret_cast<char*>(&mKmerLen), sizeof(uint32_t));
+    mVcfPloidy = 0;
+    inFile.read(reinterpret_cast<char*>(&mVcfPloidy), sizeof(uint32_t));
+
+    /* -------------------------------------------------- mVcfHead and mVcfInfoMap  -------------------------------------------------- */
+    // Clear the existing data
+    mVcfHead.clear();
+    mFastaLenMap.clear();
+    mVcfInfoMap.clear();
+
+    // Read mVcfHead
+    uint32_t vcfHeadLength;
+    inFile.read(reinterpret_cast<char*>(&vcfHeadLength), sizeof(uint32_t));
+    mVcfHead.resize(vcfHeadLength);
+    inFile.read(&mVcfHead[0], vcfHeadLength);
+
+    // Read mVcfInfoMap
+    uint32_t mVcfInfoMapSize;
+    inFile.read(reinterpret_cast<char*>(&mVcfInfoMapSize), sizeof(uint32_t));
+
+    for (uint32_t i = 0; i < mVcfInfoMapSize; ++i) {
+        uint32_t chrNameLength;
+        inFile.read(reinterpret_cast<char*>(&chrNameLength), sizeof(uint32_t));
+        std::string chrName;
+        chrName.resize(chrNameLength);
+        inFile.read(&chrName[0], chrNameLength);
+
+        // chromosome length
+        uint32_t chrLen;
+        inFile.read(reinterpret_cast<char*>(&chrLen), sizeof(uint32_t));
+        mFastaLenMap[chrName] = chrLen;
+        mGenomeSize += chrLen;
+
+        uint32_t startVecMapSize;
+        inFile.read(reinterpret_cast<char*>(&startVecMapSize), sizeof(uint32_t));
+
+        std::map<uint32_t, std::vector<std::string> > startVecMap;
+        for (uint32_t j = 0; j < startVecMapSize; ++j) {
+            uint32_t start;
+            inFile.read(reinterpret_cast<char*>(&start), sizeof(uint32_t));
+
+            uint32_t infoVecSize;
+            inFile.read(reinterpret_cast<char*>(&infoVecSize), sizeof(uint32_t));
+
+            std::vector<std::string> infoVec;
+            for (uint32_t k = 0; k < infoVecSize; ++k) {
+                uint32_t infoLength;
+                inFile.read(reinterpret_cast<char*>(&infoLength), sizeof(uint32_t));
+                std::string info;
+                info.resize(infoLength);
+                inFile.read(&info[0], infoLength);
+                infoVec.push_back(std::move(info));
+            }
+            startVecMap[start] = infoVec;
+        }
+        mVcfInfoMap[chrName] = startVecMap;
+    }
+
+    /* -------------------------------------------------- mHapNum and mHapMap  -------------------------------------------------- */
+    inFile.read(reinterpret_cast<char*>(&mHapNum), sizeof(uint16_t));
+
+    // Clear the existing data
+    mHapMap.clear();
+
+    for (uint16_t i = 0; i < mHapNum; ++i) {
+        uint16_t hapIdx;
+        uint32_t hapNameLength;
+
+        inFile.read(reinterpret_cast<char*>(&hapIdx), sizeof(uint16_t));
+        inFile.read(reinterpret_cast<char*>(&hapNameLength), sizeof(uint32_t));
+
+        std::string hapName;
+        hapName.resize(hapNameLength);
+        inFile.read(&hapName[0], hapNameLength);
+
+        // Add the haplotype to the map.
+        mHapMap.emplace(hapIdx, std::move(hapName));
+    }
+
+    /* -------------------------------------------------- mGraphMap  -------------------------------------------------- */
+    // Clear the existing data
+    mGraphMap.clear();
+
+    // Read the size of the outer map.
+    uint32_t chrNum;
+    inFile.read(reinterpret_cast<char*>(&chrNum), sizeof(uint32_t));
+
+    for (uint32_t i = 0; i < chrNum; ++i) {
+        // Read the chromosome name and number of nodes in this chromosome.
+        uint32_t chrNameLength;
+        inFile.read(reinterpret_cast<char*>(&chrNameLength), sizeof(uint32_t));
+
+        std::string chrName;
+        chrName.resize(chrNameLength);
+        inFile.read(&chrName[0], chrNameLength);
+
+        uint32_t numNodes;
+        inFile.read(reinterpret_cast<char*>(&numNodes), sizeof(uint32_t));
+
+        for (uint32_t j = 0; j < numNodes; ++j) {
+            // Read the node start position and its data.
+            uint32_t nodeStartPos;
+            nodeSrt nodeSrtData;
+
+            inFile.read(reinterpret_cast<char*>(&nodeStartPos), sizeof(uint32_t));
+
+            // Read the sequence information.
+            uint32_t numSeqEntries;
+            inFile.read(reinterpret_cast<char*>(&numSeqEntries), sizeof(uint32_t));
+
+            for (uint32_t k = 0; k < numSeqEntries; ++k) {
+                uint32_t seqLen;
+                inFile.read(reinterpret_cast<char*>(&seqLen), sizeof(uint32_t));
+
+                std::string seq;
+                seq.resize(seqLen);
+                inFile.read(&seq[0], seqLen);
+                nodeSrtData.seqVec.push_back(seq);
+            }
+
+            // Read the genotype information.
+            uint32_t numGtEntries;
+            inFile.read(reinterpret_cast<char*>(&numGtEntries), sizeof(uint32_t));
+            nodeSrtData.hapGtVec.resize(numGtEntries);
+            inFile.read(reinterpret_cast<char*>(&nodeSrtData.hapGtVec[0]), sizeof(uint16_t) * numGtEntries);
+
+            // Read the k-mer hash information.
+            uint32_t numKmerHashEntries;
+            inFile.read(reinterpret_cast<char*>(&numKmerHashEntries), sizeof(uint32_t));
+            nodeSrtData.kmerHashVec.resize(numKmerHashEntries);
+            inFile.read(reinterpret_cast<char*>(&nodeSrtData.kmerHashVec[0]), sizeof(uint64_t) * numKmerHashEntries);
+
+            mGraphMap[chrName][nodeStartPos] = move(nodeSrtData);
+        }
+    }
+
+    /* -------------------------------------------------- mGraphKmerHashHapStrMap  -------------------------------------------------- */
+    // Clear the existing data in mGraphKmerHashHapStrMap
+    mGraphKmerHashHapStrMap.clear();
+
+    uint64_t kmerHash;
+    kmerCovFreBitVec kmerCovFreBitVecStr;
+    uint8_t c;
+    uint8_t f;
+    uint64_t BitVecLen;
+
+    // Read base
+    uint64_t ReadBase = 0;
+    // Read base
+    inFile.read(reinterpret_cast<char*>(&ReadBase), sizeof(uint64_t));
+
+    // Read kmerHash, kmerCov, and kmerFre from the file
+    while (inFile.read(reinterpret_cast<char*>(&kmerHash), sizeof(uint64_t))) {
+
+        // Read kmerCov and kmerFre
+        inFile.read(reinterpret_cast<char*>(&c), sizeof(uint8_t));
+        inFile.read(reinterpret_cast<char*>(&f), sizeof(uint8_t));
+
+        // Read BitVec length
+        inFile.read(reinterpret_cast<char*>(&BitVecLen), sizeof(uint64_t));
+
+        // Read BitVec
+        vector<int8_t> BitVec(BitVecLen);
+        for (auto& Bit : BitVec) {
+            inFile.read(reinterpret_cast<char*>(&Bit), sizeof(int8_t));
+        }
+
+        // Store data in the map
+        kmerCovFreBitVecStr.c = c;
+        kmerCovFreBitVecStr.f = f;
+        kmerCovFreBitVecStr.BitVec = BitVec;
+        mGraphKmerHashHapStrMap[kmerHash] = kmerCovFreBitVecStr;
+    }
+
+    // Close the file
+    inFile.close();
 }
 
 
 /**
  * @brief graph index for k-mer (threads)
  * 
- * @date 2023/12/04
+ * @date 2024/04/16
  * 
  * @param chromosome            mGraphMap output by construct��map<chr, map<start, nodeSrt> >
  * @param nodeIter              node iterator
@@ -1132,6 +1131,10 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
     const uint32_t& vcfPloidy, 
     const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap
 ) {
+    // Minimum k-mer frequency
+    uint8_t MIN_KMER_FRE = 1;
+    unordered_map<uint64_t, pair<vector<int8_t>, uint8_t > > KmerHapBitFrePairMap;  // map<kmerHash, pair<vector<int8_t>, frequence > >
+
     unordered_map<uint64_t, vector<int8_t> > KmerHapBitMap;  // kmer: map<kmerHash, vector<int8_t> >:  0000 0000, Each bits represents a haplotype, 0->False 1->True
 
     map<uint64_t, uint8_t> kmerHashFreMap;  // map<kmerHash, frequence≥2>
@@ -1191,52 +1194,50 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
         map<uint8_t, unordered_set<uint64_t> > freKmerHashSetMap;  // map<frequency, unordered_set<kmerHash> >
         kmerBit::kmer_sketch_construct(seqTmp, kmerLen, freKmerHashSetMap, bf);
 
-        // Select the lowest frequency k-mer
-        map<uint8_t, unordered_set<uint64_t> > freKmerHashSetMapTmp;  // map<frequency, unordered_set<kmerHash> >
-        for (const auto& [frequency, kmerHashSet] : freKmerHashSetMap) {
-            freKmerHashSetMapTmp.emplace(frequency, kmerHashSet);
+        // Variable to store the quotient and remainder
+        const uint16_t& quotient = get<0>(hapIdxQRmap.at(haplotype));
+        const uint16_t& remainder = get<1>(hapIdxQRmap.at(haplotype));
 
-            // Record k-mer with frequency ≥ 2
-            if (frequency >= 2) {
-                for (const auto& kmerHash : kmerHashSet) {
-                    kmerHashFreMap.emplace(kmerHash, frequency);
+        // Record all k-mers to KmerHapBitFrePairMap
+        for (const auto& [frequency, kmerHashSet] : freKmerHashSetMap) {
+            for (const auto& kmerHash : kmerHashSet) {
+                auto emplacedValue = KmerHapBitFrePairMap.emplace(kmerHash, make_pair(vector<int8_t>(DIVIDE_BY_8(hapGtVec.size()) + 1, 0), frequency)).first;
+                emplacedValue->second.second = frequency;
+                int8_t& hapBitTmp = emplacedValue->second.first[quotient];
+                construct_index::set_bit_to_one(hapBitTmp, remainder);  // Set the corresponding haplotype to 1
+
+                // If the k-mer is present in the MBF, but haplotype 0 of that node does not contain it, set the last bit of hapBit to 1, which means that the frequency in the genome is 1.
+                if (gt != (uint16_t)0 && bf->find(kmerHash) && construct_index::get_bit(emplacedValue->second.first[0], 0) == 0) {
+                    // set the last bit of hapBit to 1
+                    construct_index::set_bit_to_one(emplacedValue->second.first.back(), 7);
                 }
             }
-            
-            // If the value > threshold, the loop exits
+
+            // Update MIN_KMER_FRE if the frequency is greater than or equal to 2
             if (frequency >= 2) {
-                break;
+                MIN_KMER_FRE = min(MIN_KMER_FRE, frequency);
             }
         }
 
         // clear memory (freKmerHashSetMap)
         map<uint8_t, unordered_set<uint64_t> >().swap(freKmerHashSetMap);
-        
-        const uint16_t& quotient = get<0>(hapIdxQRmap.at(haplotype));  // Variable to store the quotient
-        const uint16_t& remainder = get<1>(hapIdxQRmap.at(haplotype));  // Get the remainder
-
-        // Add the kmerHash to the node's information
-        for (const auto& [frequency, kmerHashSet] : freKmerHashSetMapTmp) {  //  map<frequency, unorser_set<kmerHash> >
-            for (const auto& kmerHash : kmerHashSet) {  // vector<kmerHash>
-                // Record the haplotype information of k-mer
-                auto emplacedValue = KmerHapBitMap.emplace(kmerHash, vector<int8_t>(DIVIDE_BY_8(hapGtVec.size()) + 1, 0)).first;
-
-                int8_t& hapBitTmp = emplacedValue->second[quotient];
-                construct_index::set_bit_to_one(hapBitTmp, remainder);  // Set the corresponding haplotype to 1
-
-                // If the k-mer is present in the MBF, but haplotype 0 of that node does not contain it, set the last bit of hapBit to 1, which means that the frequency in the genome is 1.
-                if (gt != (uint16_t)0 && bf->find(kmerHash) && construct_index::get_bit(emplacedValue->second[0], 0) == 0) {
-                    // set the last bit of hapBit to 1
-                    construct_index::set_bit_to_one(emplacedValue->second.back(), 7);
-                }
-            }
-        }
-
-        // clear memory (freKmerHashSetMapTmp)
-        map<uint8_t, unordered_set<uint64_t> >().swap(freKmerHashSetMapTmp);
 
         // Haplotype index increment
         ++haplotype;
+    }
+
+    // Transfer k-mers with frequency <= MIN_KMER_FRE to KmerHapBitMap
+    for (auto it = KmerHapBitFrePairMap.begin(); it != KmerHapBitFrePairMap.end(); ) {
+        if (it->second.second <= MIN_KMER_FRE) {
+            KmerHapBitMap.emplace(it->first, move(it->second.first));
+            // Record the frequency of k-mer with frequencies≥2
+            if (it->second.second >= 2) {
+                kmerHashFreMap.emplace(it->first, it->second.second);
+            }
+            it = KmerHapBitFrePairMap.erase(it);
+        } else {
+            ++it;
+        }
     }
 
     return {nodeIter, move(KmerHapBitMap), move(kmerHashFreMap)};

@@ -2,9 +2,6 @@
 
 #include "../include/counting_bloom_filter.hpp"
 
-using namespace std;
-
-
 // overloaded assignment operator
 BloomFilter& BloomFilter::operator=(const BloomFilter& other) {
     if (this != &other) {
@@ -12,7 +9,18 @@ BloomFilter& BloomFilter::operator=(const BloomFilter& other) {
         _size = other._size;
         _numHashes = other._numHashes;
         _seeds = other._seeds;
-        _filter = other._filter;
+
+        // delete old memory
+        if (_filter != nullptr) {
+            delete[] _filter;
+            _filter = nullptr;
+        }
+
+        // allocate new memory
+        _filter = new uint8_t[_size];
+
+        // copy data
+        std::copy(other._filter, other._filter + _size, _filter);
     }
     return *this;
 }
@@ -89,30 +97,30 @@ uint64_t BloomFilter::_murmur_hash(const void* key, int len, unsigned int seed) 
     return hashValue[0] + hashValue[1];
 }
 
-// print
-uint64_t BloomFilter::get_size() {
-    return _size;
-}
-
-uint32_t BloomFilter::get_num() {
-    return _numHashes;
-}
-
 double BloomFilter::get_cap() {
-    if (_size == 0)
-    {
+    if (_size == 0) {
         // Return a special value indicating an invalid or undefined result
         return std::numeric_limits<double>::quiet_NaN();  // or return std::numeric_limits<double>::infinity();
     }
 
-    uint64_t totalNum = std::count_if(_filter.begin(), _filter.end(), [](const uint8_t& it) { return it > 0; });
+    // uint64_t totalNum = std::count_if(_filter.begin(), _filter.end(), [](const uint8_t& it) { return it > 0; });
+    uint64_t totalNum = 0;
+    for (uint64_t i = 0; i < _size; ++i) {
+        if (_filter[i] > 0) {
+            ++totalNum;
+        }
+    }
 
     return static_cast<double>(totalNum) / _size;
 }
 
 // clear
 void BloomFilter::clear() {
-    vector<uint8_t>().swap(_filter);
+    if (_filter != nullptr) {
+        delete[] _filter;
+        _filter = nullptr;
+    }
+    _filter = new uint8_t[_size]();
 }
 
 void BloomFilter::save(const string& filename) const {
@@ -131,8 +139,8 @@ void BloomFilter::save(const string& filename) const {
         }
         
         // Save the content of the bloom filter
-        for (const auto& value : _filter) {
-            file.write(reinterpret_cast<const char*>(&value), sizeof(uint8_t));
+        for (uint64_t i = 0; i < _size; ++i) {
+            file.write(reinterpret_cast<const char*>(&_filter[i]), sizeof(uint8_t));
         }
         
         file.close();
@@ -154,8 +162,11 @@ void BloomFilter::load(const string& filename) {
         file.read(reinterpret_cast<char*>(&_numHashes), sizeof(uint32_t));
         
         // Empty the original Bloom filter
-        _filter.clear();
-        _filter.resize(_size);
+        if (_filter != nullptr) {
+            delete[] _filter;
+            _filter = nullptr;
+        }
+        _filter = new uint8_t[_size]();
         _seeds.clear();
         _seeds.resize(_numHashes);
 
@@ -165,8 +176,8 @@ void BloomFilter::load(const string& filename) {
         }
         
         // Load the content of the bloom filter
-        for (auto& value : _filter) {
-            file.read(reinterpret_cast<char*>(&value), sizeof(uint8_t));
+        for (uint64_t i = 0; i < _size; ++i) {
+            file.read(reinterpret_cast<char*>(&_filter[i]), sizeof(uint8_t));
         }
         
         file.close();

@@ -35,6 +35,7 @@ std::mutex mtxG;
  * @param svGenotypeBool         structural variation genotyping only
  * @param threads
  * @param debug
+ * @param minSupportingReads     the minimum number of supporting reads for a variant
  * 
  * @return 0
 **/
@@ -56,7 +57,8 @@ int GENOTYPE::genotype(
     const string& transitionProType, 
     const bool& svGenotypeBool, 
     uint32_t threads, 
-    const bool & debug
+    const bool & debug, 
+    const float & minSupportingReads
 ) {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Genotyping ...\n";  // print log
 
@@ -157,7 +159,7 @@ int GENOTYPE::genotype(
     cerr << endl << endl;
 
     // save
-    GENOTYPE::save(GraphMap, vcfHead, vcfInfoMap, sampleName, outputFileName);
+    GENOTYPE::save(GraphMap, vcfHead, vcfInfoMap, sampleName, outputFileName, minSupportingReads);
 
     return 0;
 }
@@ -1524,6 +1526,7 @@ double GENOTYPE::cal_phred_scaled(long double value) {
  * @param vcfInfoMap          vcf information, for output
  * @param sampleName          sample name
  * @param outputFileName      output file information
+ * @param minSupportingReads  minimum number of supporting reads
  * 
  * @return 0
 **/
@@ -1532,9 +1535,9 @@ int GENOTYPE::save(
     string vcfHead, 
     map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
     const string& sampleName, 
-    const string & outputFileName
-)
-{
+    const string & outputFileName, 
+    const float& minSupportingReads
+) {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Wrote genotyped variants to '" << outputFileName << "' \n\n\n";
 
     std::stringstream oss;
@@ -1579,10 +1582,24 @@ int GENOTYPE::save(
                             oss << "\t" << vcfInfo[i];
                         }
                     } else if (i == 8) {
-                        oss << "\t" << "GT:GQ:GPP:NAK:KC:UK";
+                        oss << "\t" << "GT:GQ:GPP:NAK:CAK:UK";
                     }
                 }
-                
+
+                // mis site
+                bool misBool = false;
+                if (+posteriorInfo.uniqueKmerNum > 0 && minSupportingReads > 0.0) {
+                    for (auto kmerAveCovTmp : posteriorInfo.kmerAveCovVec) {
+                        if (kmerAveCovTmp < minSupportingReads) {
+                            misBool = true;
+                            break;
+                        }
+                    }
+                }
+                if (misBool) {
+                    std::fill(gtTxtVec.begin(), gtTxtVec.end(), ".");
+                }
+
                 // Genotype
                 oss << "\t" << join(gtTxtVec, "/");
                 

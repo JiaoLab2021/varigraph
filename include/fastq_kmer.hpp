@@ -28,16 +28,15 @@
 using namespace std;
 
 
-class FastqKmer
-{
-private:
+class FastqKmer {
+protected:
     vector<string> fastqFileNameVec_;
     uint32_t kmerLen_;
     uint32_t threads_;
 
     std::mutex mtx;
 
-    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap_;  // // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVecP>
+    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap_;  // Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVecP>
 
 public:
     uint64_t mReadBase = 0;  //Sequencing file size
@@ -83,9 +82,7 @@ public:
      * 
      * @return void
 	**/
-    void fastq_file_open(
-        const string & fastqFileName
-    );
+    void fastq_file_open(const string & fastqFileName);
 
 
     /**
@@ -98,9 +95,7 @@ public:
      * 
      * @return void
 	**/
-    void save_index(
-        const string & outputFileName
-    );
+    void save_index(const string & outputFileName);
 
 
     /**
@@ -113,14 +108,11 @@ public:
      * 
      * @return void
     **/
-    void load_index(
-        const string & inputFileName
-    );
+    void load_index(const string & inputFileName);
 };
 
 
-namespace fastq_kmer
-{
+namespace fastq_kmer {
     /**
      * @author zezhen du
      * @date 2023/08/01

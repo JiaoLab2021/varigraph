@@ -39,15 +39,17 @@ public:
      * 
      * @return 0
     **/
-
     BloomFilter() {}
-    BloomFilter(uint64_t n, double p) : _size(_calculate_size(n, p)), _numHashes(_calculate_num_hashes(n, _size)), _filter(_size, 0) {
+    BloomFilter(uint64_t n, double p) : _size(_calculate_size(n, p)), _numHashes(_calculate_num_hashes(n, _size)) {
+        _filter = new uint8_t[_size]();
         _init_seeds(_numHashes);
     }
 
     ~BloomFilter() {
-        _filter.clear();
-        vector<uint8_t>().swap(_filter);
+        if (_filter != nullptr) {
+            delete[] _filter;
+            _filter = nullptr;
+        }
     }
 
     // overloaded assignment operator
@@ -63,9 +65,9 @@ public:
     uint8_t count(uint64_t kmer);
 
     // get_state
-    uint64_t get_size();
-    uint32_t get_num();
     double get_cap();
+    uint64_t get_size() { return _size; }
+    uint32_t get_num() { return _numHashes; }
 
     // clear
     void clear();
@@ -74,11 +76,11 @@ public:
     void save(const string& filename) const;
     void load(const string& filename);
 
-private:
+protected:
     uint64_t _size;  // Bloom filter size
     uint32_t _numHashes;  // number of hash functions
     vector<uint64_t> _seeds;  // Stores the seed of the hash function
-    vector<uint8_t> _filter;  // Storing Bloom Filters
+    uint8_t* _filter;  // Storing Bloom Filters
 
     // Calculate Bloom _filter size
     static uint64_t _calculate_size(uint64_t n, double p);

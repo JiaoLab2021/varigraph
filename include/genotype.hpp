@@ -78,6 +78,7 @@ namespace GENOTYPE
      * @param svGenotypeBool         structural variation genotyping only
      * @param threads
      * @param debug
+     * @param minSupportingReads     the minimum number of supporting reads for a variant
      * 
      * @return 0
     **/
@@ -99,7 +100,8 @@ namespace GENOTYPE
         const string& transitionProType, 
         const bool& svGenotypeBool, 
         uint32_t threads, 
-        const bool & debug
+        const bool & debug, 
+        const float & minSupportingReads
     );
 
 
@@ -445,6 +447,7 @@ namespace GENOTYPE
      * @param vcfInfoMap          vcf information for output
      * @param sampleName          sample name
      * @param outputFileName      Output file information
+     * @param minSupportingReads  the minimum number of supporting reads for a variant
      * 
      * @return 0
     **/
@@ -453,7 +456,8 @@ namespace GENOTYPE
         string vcfHead, 
         map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
         const string& sampleName, 
-        const string & outputFileName
+        const string & outputFileName, 
+        const float& minSupportingReads
     );
 }
 

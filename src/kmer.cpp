@@ -6,43 +6,6 @@ using namespace std;
 
 // emulate 128-bit integers and arrays
 typedef struct { uint64_t x, y; } mm128_t;
-typedef struct { size_t n, m; mm128_t *a; } mm128_v;
-
-typedef struct { // a simplified version of kdq
-	int front, count;
-	int a[32];
-} tiny_queue_t;
-
-unsigned char seq_nt4_table[256] = {
-	0, 1, 2, 3,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 0, 4, 1,  4, 4, 4, 2,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  3, 3, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 0, 4, 1,  4, 4, 4, 2,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  3, 3, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,
-	4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4,  4, 4, 4, 4
-};
-
-uint64_t kmerBit::hash64(uint64_t key, uint64_t mask)
-{
-	key = (~key + (key << 21)) & mask; // key = (key << 21) - key - 1;
-	key = key ^ key >> 24;
-	key = ((key + (key << 3)) + (key << 8)) & mask; // key * 265
-	key = key ^ key >> 14;
-	key = ((key + (key << 2)) + (key << 4)) & mask; // key * 21
-	key = key ^ key >> 28;
-	key = (key + (key << 31)) & mask;
-	return key;
-}
 
 
 /**
@@ -54,12 +17,10 @@ uint64_t kmerBit::hash64(uint64_t key, uint64_t mask)
  * 
  * @return 0
 **/
-int kmerBit::kmer_sketch_bf(const string& str, const uint32_t& k, BloomFilter* bf)
-{
+int kmerBit::kmer_sketch_bf(const string& str, const uint32_t& k, BloomFilter* bf) {
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
 	mm128_t buf[256], min = { UINT64_MAX, UINT64_MAX };
-	tiny_queue_t tq;
 
 	unsigned int len = str.length();
 
@@ -84,7 +45,7 @@ int kmerBit::kmer_sketch_bf(const string& str, const uint32_t& k, BloomFilter* b
 				bf->add(info.x);
 			}
 		} 
-		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
+		else l = 0, kmer_span = 0;
 	}
 
 	return 0;
@@ -101,12 +62,10 @@ int kmerBit::kmer_sketch_bf(const string& str, const uint32_t& k, BloomFilter* b
  *                                  a[i].x = kMer<<8 | kmerSpan
  * @param bf                        Frequency of kmers in the reference genome, Counting Bloom Filter
 **/
-void kmerBit::kmer_sketch_construct(string& str, uint32_t k, map<uint8_t, unordered_set<uint64_t> >& freKmerHashSetMap, BloomFilter* bf)
-{
+void kmerBit::kmer_sketch_construct(string& str, uint32_t k, map<uint8_t, unordered_set<uint64_t> >& freKmerHashSetMap, BloomFilter* bf) {
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
 	mm128_t buf[256], min = { UINT64_MAX, UINT64_MAX };
-	tiny_queue_t tq;
 
 	unsigned int len = str.length();
 
@@ -133,7 +92,7 @@ void kmerBit::kmer_sketch_construct(string& str, uint32_t k, map<uint8_t, unorde
 				emplacedValue.insert(info.x);
 			}
 		}
-		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
+		else l = 0, kmer_span = 0;
 	}
 }
 
@@ -159,7 +118,6 @@ vector<uint64_t> kmerBit::kmer_sketch_fastq(
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
 	mm128_t buf[256], min = { UINT64_MAX, UINT64_MAX };
-	tiny_queue_t tq;
 
 	unsigned int len = str.length();
 
@@ -184,7 +142,7 @@ vector<uint64_t> kmerBit::kmer_sketch_fastq(
 				}
 			}
 		} 
-		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
+		else l = 0, kmer_span = 0;
 	}
 
 	return hashVec;
@@ -210,7 +168,6 @@ unordered_set<uint64_t> kmerBit::kmer_sketch_genotype(
 	uint64_t shift1 = 2 * (k - 1), mask = (1ULL<<2*k) - 1, kmer[2] = {0,0};
 	int i, l, kmer_span = 0;
 	mm128_t buf[256], min = { UINT64_MAX, UINT64_MAX };
-	tiny_queue_t tq;
 
 	unsigned int len = str.length();
 
@@ -236,7 +193,7 @@ unordered_set<uint64_t> kmerBit::kmer_sketch_genotype(
 				hashSet.insert(info.x);
 			}
 		}
-		else l = 0, tq.count = tq.front = 0, kmer_span = 0;
+		else l = 0, kmer_span = 0;
 	}
 
 	return hashSet;
