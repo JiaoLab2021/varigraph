@@ -15,7 +15,7 @@ jobs:
 
     strategy:
       matrix:
-        cmake-version: [3.12]
+        cmake-version: [3.12.0]
         compiler: [gcc-9]
 
     steps:
@@ -31,7 +31,7 @@ jobs:
 
     - name: Set up CMake ${{ matrix.cmake-version }}
       run: |
-        sudo apt-get install -y cmake=${{ matrix.cmake-version }}.*
+        sudo apt-get install -y cmake=${{ matrix.cmake-version }}
         cmake --version
 
     - name: Install CUDA Toolkit if needed
