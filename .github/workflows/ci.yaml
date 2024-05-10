@@ -59,10 +59,10 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDAToolkit_ROOT=${CUDAToolkit_ROOT}
+        cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDAToolkit_ROOT=${CUDAToolkit_ROOT} -DCUDA_TOOLKIT_ROOT_DIR=${CUDAToolkit_ROOT}
         make
 
     - name: Run tests
       run: |
         ./varigraph -h
-
+        ./varigraph-gpu -h
