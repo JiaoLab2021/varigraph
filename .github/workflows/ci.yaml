@@ -57,7 +57,7 @@ jobs:
 
     - name: Configure and build project
       run: |
-        cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDA_ARCHITECTURES=75 -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
+        cmake . -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDA_ARCHITECTURES=75 -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
         make
 
     - name: Run tests
