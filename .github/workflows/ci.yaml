@@ -43,6 +43,9 @@ jobs:
         # Set CUDA Toolkit root directory
         export CUDAToolkit_ROOT=/usr/local/cuda
 
+        # Install nvcc
+        sudo apt-get -y install nvidia-cuda-toolkit
+
     - name: Configure and build project
       run: |
         mkdir build
