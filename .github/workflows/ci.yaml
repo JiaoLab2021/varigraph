@@ -6,6 +6,9 @@ on:
       - main
   pull_request:
 
+env:
+  BUILD_TYPE: Release
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -16,38 +19,22 @@ jobs:
         compiler: [gcc-9]
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v2
+    - uses: actions/checkout@v3
       with:
-        submodules: recursive
+        submodules: 'recursive'
+      env:
+        NODE_VERSION: 16.x
 
-    - name: Set up CMake ${{ matrix.cmake-version }}
-      uses: cmake/setup-cmake@v1
-      with:
-        cmake-version: ${{ matrix.cmake-version }}
-
-    - name: Install CUDA if needed
-      if: matrix.compiler == 'gcc-9'
+    - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y libz-dev
-        # Additional steps for CUDA installation if needed
 
-    - name: Configure and build project
+    - name: Build project
       run: |
-        mkdir build
-        cd build
-        cmake ..
+        cmake . -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
         make
-      env:
-        CXXFLAGS: "-march=native" # Add custom compilation flags here
 
     - name: Run tests
       run: |
-        echo "Testing"
         ./varigraph -h
-
-    - name: Install artifacts
-      run: |
-        # Additional steps to install or package artifacts
-
