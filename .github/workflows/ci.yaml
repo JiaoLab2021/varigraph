@@ -43,7 +43,7 @@ jobs:
 
         # Set CUDA Toolkit root directory
         export CUDAToolkit_ROOT=/usr/local/cuda
-        export CUDAToolkit_ROOT=/usr/local/cuda/bin:$CUDAToolkit_ROOT
+        export PATH=/usr/local/cuda/bin:$PATH
 
     - name: Configure and build project
       run: |
