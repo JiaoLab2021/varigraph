@@ -138,6 +138,13 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
                 uint32_t startIndex = i * chunkSize;
                 uint32_t endIndex = (i == threads_ - 1) ? numUniqueKmers : startIndex + chunkSize;
 
+                // Break the loop if startIndex or endIndex is out of bounds
+                if (startIndex >= numUniqueKmers) {
+                    break;
+                } else if (endIndex > numUniqueKmers) {
+                    endIndex = numUniqueKmers;
+                }
+
                 futureVec.push_back(
                     pool.submit(
                         fastq_kmer_kernel::add_cov_to_map, 
@@ -221,6 +228,14 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
             uint32_t startIndex = i * chunkSize;
             uint32_t endIndex = (i == threads_ - 1) ? numUniqueKmers : startIndex + chunkSize;
 
+            // Break the loop if startIndex or endIndex is out of bounds
+            if (startIndex >= numUniqueKmers) {
+                break;
+            } else if (endIndex > numUniqueKmers) {
+                endIndex = numUniqueKmers;
+            }
+
+            // submit
             futureVec.push_back(
                 pool.submit(
                     fastq_kmer_kernel::add_cov_to_map, 

@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        cmake-version: [3.12]
+        compiler: [gcc-9]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v2
+      with:
+        submodules: recursive
+
+    - name: Set up CMake ${{ matrix.cmake-version }}
+      uses: lukka/get-cmake@v1
+      with:
+        cmake-version: ${{ matrix.cmake-version }}
+
+    - name: Install CUDA if needed
+      if: matrix.compiler == 'gcc-9'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libz-dev
+        # Additional steps for CUDA installation if needed
+
+    - name: Configure and build project
+      run: |
+        mkdir build
+        cd build
+        cmake ..
+        make
+      env:
+        CXXFLAGS: "-march=native" # Add custom compilation flags here
+
+    - name: Run tests
+      run: |
+        echo "Testing"
+        ./varigraph -h
+
+    - name: Install artifacts
+      run: |
+        # Additional steps to install or package artifacts
+
