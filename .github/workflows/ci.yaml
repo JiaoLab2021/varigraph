@@ -47,7 +47,7 @@ jobs:
       run: |
         mkdir build
         cd build
-        cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }}
+        cmake .. -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDAToolkit_ROOT=${CUDAToolkit_ROOT}
         make
 
     - name: Run tests
