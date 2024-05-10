@@ -13,11 +13,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    strategy:
-      matrix:
-        cmake-version: [3.12.0]
-        compiler: [gcc-9]
-
     steps:
     - uses: actions/checkout@v3
       with:
@@ -29,9 +24,9 @@ jobs:
         sudo apt-get install -y libz-dev
         # Additional steps for installing CUDA Toolkit if needed
 
-    - name: Set up CMake ${{ matrix.cmake-version }}
+    - name: Set up CMake
       run: |
-        sudo apt-get install -y cmake=${{ matrix.cmake-version }}
+        sudo apt-get install -y cmake
         cmake --version
 
     - name: Install CUDA Toolkit if needed
