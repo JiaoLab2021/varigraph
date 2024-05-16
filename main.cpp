@@ -1,5 +1,6 @@
 // g++ main.cpp src/*.cpp -o varigraph -lz -lpthread -std=c++17 -O3 -march=native
 // cmake -DCMAKE_CXX_FLAGS="-march=native" .
+// cmake -DCMAKE_INSTALL_PREFIX=$path .
 #include <iostream>
 #include <vector>
 #include "zlib.h"

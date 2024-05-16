@@ -1,4 +1,4 @@
-// nvcc --extended-lambda -G -o varigraph-gpu main.cu src/*.cpp src/*.cu -lz -std=c++17
+// nvcc --extended-lambda -G -o varigraph-gpu main.cu src/*.cpp src/*.cu -lz -std=c++17 -O3 -Xcompiler "-march=native"
 #include <iostream>
 #include <vector>
 #include "zlib.h"
