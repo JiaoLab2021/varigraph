@@ -94,7 +94,7 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
         // ks->seq.s records the sequence
         uint32_t seqLen = ks->seq.l;
 
-        if (bufferSize + seqLen > MAX_CHUNK_SIZE) {
+        if (bufferSize + seqLen + 1 > MAX_CHUNK_SIZE) {
             // Copy the sequence to the end of the existing data in strD
             gpuErrchk(cudaMemcpy(strD, strH, sizeof(char) * bufferSize, cudaMemcpyHostToDevice));
 
