@@ -6,13 +6,11 @@
 Varigraph::Varigraph(
     const string& refFileName, 
     const string& vcfFileName, 
-    const vector<string>& fastqFileNameVec, 
+    const string& samplesConfigFileName, 
     const string& inputGraphFileName, 
     const string& outputGraphFileName, 
-    const string& outputFileName, 
     const bool& fastMode, 
     uint32_t& kmerLen, 
-    const string& sampleName, 
     const string& sampleType, 
     const uint32_t& samplePloidy, 
     uint32_t& vcfPloidy, 
@@ -22,11 +20,14 @@ Varigraph::Varigraph(
     const bool& svGenotypeBool, 
     const bool& debug, 
     const uint32_t& threads, 
-    const float& minSupportingReads
-) : refFileName_(refFileName), vcfFileName_(vcfFileName), fastqFileNameVec_(fastqFileNameVec), inputGraphFileName_(inputGraphFileName), 
-    outputGraphFileName_(outputGraphFileName), outputFileName_(outputFileName), 
-    fastMode_(fastMode), kmerLen_(kmerLen), sampleName_(sampleName), sampleType_(sampleType), samplePloidy_(samplePloidy), vcfPloidy_(vcfPloidy), haploidNum_(haploidNum), 
-    chrLenThread_(chrLenThread), transitionProType_(transitionProType), svGenotypeBool_(svGenotypeBool), debug_(debug), threads_(threads), minSupportingReads_(minSupportingReads) {
+    const float& minSupportingReads, 
+    const bool& useUniqueKmers, 
+    const bool& useDepth
+) : refFileName_(refFileName), vcfFileName_(vcfFileName), samplesConfigFileName_(samplesConfigFileName), inputGraphFileName_(inputGraphFileName), 
+    outputGraphFileName_(outputGraphFileName), 
+    fastMode_(fastMode), kmerLen_(kmerLen), sampleType_(sampleType), samplePloidy_(samplePloidy), vcfPloidy_(vcfPloidy), haploidNum_(haploidNum), 
+    chrLenThread_(chrLenThread), transitionProType_(transitionProType), svGenotypeBool_(svGenotypeBool), debug_(debug), threads_(threads), 
+    minSupportingReads_(minSupportingReads), useUniqueKmers_(useUniqueKmers), useDepth_(useDepth) {
     // cerr
     std::cerr.imbue(std::locale(""));  // Thousandth output
 }
@@ -47,6 +48,7 @@ void Varigraph::construct() {
         inputGraphFileName_, 
         outputGraphFileName_, 
         fastMode_, 
+        useUniqueKmers_, 
         kmerLen_, 
         vcfPloidy_, 
         debug_, 
@@ -90,14 +92,14 @@ void Varigraph::construct() {
  * 
  * @return void
 **/
-void Varigraph::load()
-{
+void Varigraph::load() {
     ConstructIndexClassPtr_ = new ConstructIndex(
         refFileName_, 
         vcfFileName_, 
         inputGraphFileName_, 
         outputGraphFileName_, 
-        false, 
+        fastMode_, 
+        useUniqueKmers_, 
         kmerLen_, 
         vcfPloidy_, 
         debug_, 
@@ -125,19 +127,96 @@ void Varigraph::load()
 
 
 /**
+ * @brief Parse sample configuration file (sampleName, readPath1, readPath2)
+ * 
+ * @return void
+*/
+void Varigraph::parse_sample_config() {
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Starting to parse the samples configuration file: " << samplesConfigFileName_ << endl;
+    // open file
+    GzChunkReader GzChunkReaderClass(samplesConfigFileName_);
+
+    // read line
+    string line;
+    while (GzChunkReaderClass.read_line(line)) {
+        // skip empty lines
+        if (line.empty()) continue;
+
+        line = strip(line, '\n');  // remove trailing newline
+
+        // split
+        std::istringstream iss(line);
+        vector<string> lineVec(std::istream_iterator<std::string>{iss}, std::istream_iterator<std::string>{});
+
+        // check
+        if (lineVec.size() <= 1) {
+            cerr << "[" << __func__ << "::" << getTime() << "] " << "Error: The samples configuration file is missing sequencing file information (" << line << ")." << endl;
+            exit(1);
+        }
+
+        // sample name
+        string& sampleName = lineVec[0];
+        vector<string> fastqsVec;
+
+        for (uint32_t i = 1; i < lineVec.size(); i++) {
+            const auto& filePath = lineVec[i];
+            if (filesystem::exists(filePath) && filesystem::file_size(filePath) > 0) {
+                fastqsVec.push_back(filePath);
+            } else {
+                cerr << "[" << __func__ << "::" << getTime() << "] " << "Error: File '" << filePath << "' does not exist or is empty." << endl;
+                exit(1);
+            }
+        }
+        sampleConfigTupleVec_.push_back({sampleName, fastqsVec});
+    }
+
+    // Log
+    cerr << endl;
+    cerr << "           - " << "Number of samples: " << sampleConfigTupleVec_.size() << endl << endl << endl;
+}
+
+/**
+ * @brief fastq and genotype
+ * 
+ * @return void
+*/
+void Varigraph::fastq_genotype() {
+    // Merge k-mer information from Genome Graph into nodes.
+    ConstructIndexClassPtr_->graph2node();
+
+    // fastq and genotype
+    for (const auto& [sampleName, fastqFileNameVec] : sampleConfigTupleVec_) {  // vector<tuple<sampleName, vector<readPath> > >
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Processing sample: " << sampleName << endl << endl;
+
+        // fastq
+        kmer_read(fastqFileNameVec);
+
+        // genotype
+        genotype(sampleName);
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample: " << sampleName << " has been processed." << endl << endl << endl;
+
+        // Reset ConstructIndexClassPtr_
+        ConstructIndexClassPtr_->reset();
+    }
+}
+
+
+/**
  * @author zezhen du
  * @date 2023/06/27
  * @version v1.0.1
  * @brief build the kmer index of files
  * 
+ * @param fastqFileNameVec    Sequencing data
+ * 
  * @return void
 **/
-void Varigraph::kmer_read()
-{
+void Varigraph::kmer_read(vector<string> fastqFileNameVec) {
     // Computing the frequency of variants and noisy k-mers
     FastqKmer FastqKmerClass(
         ConstructIndexClassPtr_->mGraphKmerHashHapStrMap, 
-        fastqFileNameVec_, 
+        fastqFileNameVec, 
         kmerLen_, 
         threads_
     );
@@ -157,9 +236,6 @@ void Varigraph::kmer_read()
     cerr << "           - " << "Depth of the sequenced data: " << ReadDepth_ << endl;
     cerr << "           - " << "Coverage of haplotype k-mers: " << hapKmerCoverage_ << endl << endl << endl;
     cerr << defaultfloat << setprecision(6);
-
-    // Merge k-mer information from Genome Graph into nodes.
-    ConstructIndexClassPtr_->graph2node();
 }
 
 
@@ -179,6 +255,11 @@ void Varigraph::cal_ave_cov_kmer() {
     uint8_t maxCoverage;  // Maximum coverage of k-mer
     uint8_t homCoverage;  // Homozygous k-mer coverage
     tie(maxCoverage, homCoverage) = get_hom_kmer_c(kmerCovFreMap);
+
+    // use sequencing depth as the depth for homozygous k-mers
+    if (useDepth_) {
+        homCoverage = ReadDepth_ * 0.8;
+    }
 
     // haplotype k-mers coverage
     cal_hap_kmer_cov(homCoverage);
@@ -356,11 +437,11 @@ void Varigraph::kmer_histogram(
  * @version v1.0.1
  * @brief genotype
  * 
+ * @param sampleName
  * 
  * @return void
 **/
-void Varigraph::genotype()
-{
+void Varigraph::genotype(string sampleName) {
     // genotype
     GENOTYPE::genotype(
         ConstructIndexClassPtr_->mFastaLenMap, 
@@ -372,8 +453,7 @@ void Varigraph::genotype()
         sampleType_, 
         samplePloidy_, 
         hapKmerCoverage_, 
-        sampleName_, 
-        outputFileName_, 
+        sampleName, 
         kmerLen_, 
         haploidNum_, 
         chrLenThread_, 

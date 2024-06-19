@@ -56,6 +56,10 @@ struct kmerCovFreBitVec {
         vector<int8_t>().swap(BitVec);
     }
 
+    void reset() {
+        c = 0;
+    }
+
     // overloaded assignment operator
     kmerCovFreBitVec& operator=(const kmerCovFreBitVec& other) {
         if (this != &other) {
@@ -78,8 +82,7 @@ struct HMMScore {
 
 
 // posterior
-struct posteriorStr
-{
+struct posteriorStr {
     long double probability;  // Posterior probability, GPP
     vector<uint16_t> hapVec;  // haplotype information
     vector<uint64_t> kmerNumVec;  // The number of k-mers corresponding to the haplotype, NAK
@@ -88,6 +91,14 @@ struct posteriorStr
     uint8_t uniqueKmerNum;  // Number of node-unique k-mers, UK
 
     posteriorStr() : probability(0.0), uniqueKmerNum(0) {}
+
+    void reset() {
+        probability = 0.0;
+        vector<uint16_t>().swap(hapVec);
+        vector<uint64_t>().swap(kmerNumVec);
+        vector<float>().swap(kmerAveCovVec);
+        uniqueKmerNum = 0;
+    }
 };
 
 
@@ -102,6 +113,11 @@ struct nodeSrt {
     vector<HMMScore> HMMScoreVec;  // store all alpha and betas scores of nodes
 
     posteriorStr posteriorInfo;  // maximum posterior probability
+
+    void reset() {
+        vector<HMMScore>().swap(HMMScoreVec);
+        posteriorInfo.reset();
+    }
 };
 
 
@@ -115,6 +131,7 @@ protected:
     const string& outputGraphFileName_;  // save the Genome Geaph to disk
 
     bool fastMode_;
+    bool useUniqueKmers_;  // use only unique k-mers for indexing
 
     uint32_t threads_;
 
@@ -156,6 +173,7 @@ public:
         const string& inputGraphFileName, 
         const string& outputGraphFileName, 
         const bool& fastMode, 
+        const bool& useUniqueKmers, 
         const uint32_t& kmerLen, 
         const uint32_t& vcfPloidy, 
         const bool& debug, 
@@ -288,6 +306,29 @@ public:
      * @return void
     **/
     void load_index() ;
+
+    /** *
+     * @brief Reset variables
+     * 
+     * @date 2024/06/19
+     * 
+     * @return void
+    */
+    void reset() {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Reset variables ...\n\n";
+    
+        // Genotype information
+        for (auto& iter1 : mGraphMap) {  // map<chr, map<nodeStart, nodeSrt> >
+            for (auto& iter2 : iter1.second) {  // map<nodeStart, nodeSrt>
+                iter2.second.reset();
+            }
+        }
+
+        // Depth information
+        for (auto& iter1 : mGraphKmerHashHapStrMap) {  // map<kmerHash, kmerCovFreBitVec>
+            iter1.second.reset();
+        }
+    }
 };
 
 
@@ -369,10 +410,11 @@ namespace construct_index
      * 
      * @date 2023/09/01
      * 
-     * @param chromosome            mGraphMap output by construct??map<chr, map<start, nodeSrt> >
+     * @param chromosome            mGraphMap output by construct  map<chr, map<start, nodeSrt> >
      * @param nodeIter              node iterator
      * @param startNodeMap          Chromosome all nodes
      * @param fastMode              fast mode
+     * @param useUniqueKmers        use only unique k-mers for indexing
      * @param kmerLen               the length of kmer
      * @param bf                    Kmer frequency in the reference genome: Counting Bloom Filter
      * @param vcfPloidy             ploidy of genotypes in VCF file
@@ -385,6 +427,7 @@ namespace construct_index
         map<uint32_t, nodeSrt>::iterator nodeIter, 
         const map<uint32_t, nodeSrt>& startNodeMap, 
         const bool& fastMode, 
+        const bool& useUniqueKmers,
         const uint32_t& kmerLen, 
         BloomFilter* bf, 
         const uint32_t& vcfPloidy, 

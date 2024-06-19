@@ -1,4 +1,4 @@
-// g++ main.cpp src/*.cpp -o varigraph -lz -lpthread -std=c++17 -O3 -march=native
+// g++ main.cpp src/*.cpp -o varigraph -lz -lpthread -lstdc++fs -std=c++17 -O3 -march=native
 // cmake -DCMAKE_CXX_FLAGS="-march=native" .
 // cmake -DCMAKE_INSTALL_PREFIX=$path .
 #include <iostream>
@@ -15,9 +15,9 @@ using namespace std;
 
 
 // define data
-#define PROGRAM_DATA "2024/05/16"
+#define PROGRAM_DATA "2024/06/19"
 // define version
-#define PROGRAM_VERSION "1.0.4"
+#define PROGRAM_VERSION "1.0.5"
 // define author
 #define PROGRAM_AUTHOR "Zezhen Du"
 // define E-mail
@@ -96,6 +96,8 @@ int main_construct(int argc, char** argv) {
 
     // fast mode
     bool fastMode = false;  // 3
+
+    bool useUniqueKmers = false; // 4: use only unique k-mers for indexing
     
     /* -------------------------------------------------- optional arguments -------------------------------------------------- */
     // Debug code
@@ -119,6 +121,7 @@ int main_construct(int argc, char** argv) {
 
             {"kmer", required_argument, 0, 'k'},
             {"fast", no_argument, 0, 3},
+            {"use-unique-kmers", no_argument, 0, 4},
 
             {"debug", no_argument, 0, 'D'},
             {"threads", required_argument, 0, 't'},
@@ -128,7 +131,7 @@ int main_construct(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "r:v:1:2:k:3Dt:h", long_options, &option_index);
+        c = getopt_long (argc, argv, "r:v:1:2:k:34Dt:h", long_options, &option_index);
 
         if (c == -1)
             break;
@@ -154,6 +157,9 @@ int main_construct(int argc, char** argv) {
             break;
         case 3:
             fastMode = true;
+            break;
+        case 4:
+            useUniqueKmers = true;
             break;
 
         case 'D':
@@ -222,31 +228,41 @@ int main_construct(int argc, char** argv) {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Ploidy of genotypes in the VCF file: " << vcfPloidy << endl;
 
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Fast mode: " << (fastMode ? "Enabled" : "Disabled") << endl << endl << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Fast mode: " << (fastMode ? "Enabled" : "Disabled") << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Use only unique k-mers for indexing: " << (useUniqueKmers ? "Enabled" : "Disabled") << endl << endl << endl;
 
     // construct
-    vector<string> fastqFileNameVec;
+    string samplesConfigFileName = "";
+    string inputGraphFileName = "";
+    string sampleType = "het";
+    uint32_t samplePloidy = 2;
+    uint32_t haploidNum = 15;
+    uint32_t chrLenThread = 1 * 1000 * 1000;
+    string transitionProType = "fre";
+    bool svGenotypeBool = false;
     float minSupportingReads = 0.0;
+    bool useDepth = false;  // 6: use sequencing depth as the depth for homozygous k-mers
+
     Varigraph VarigraphClass(
         refFileName, 
         vcfFileName, 
-        fastqFileNameVec, 
-        "", 
+        samplesConfigFileName, 
+        inputGraphFileName, 
         outputGraphFileName, 
-        "", 
         fastMode, 
         kmerLen, 
-        "", 
-        "", 
-        0, 
+        sampleType, 
+        samplePloidy, 
         vcfPloidy, 
-        0, 
-        0, 
-        "", 
-        false, 
+        haploidNum, 
+        chrLenThread, 
+        transitionProType, 
+        svGenotypeBool, 
         debug, 
         threads, 
-        minSupportingReads
+        minSupportingReads, 
+        useUniqueKmers, 
+        useDepth
     );
 
     // build the kmer index of reference and construct graph
@@ -276,6 +292,7 @@ void help_construct(char** argv) {
          << "algorithm arguments:" << endl
          << "    -k, --kmer         INT      k-mer size (maximum: 28) [27]" << endl
          << "    --fast                      enable 'fast mode' for increased speed at the cost of slightly reduced genotyping accuracy" << endl
+         << "    --use-unique-kmers          use only unique k-mers for indexing" << endl
          << endl
          << "optional arguments:" << endl
          << "    -D, --debug                 enable debug code" << endl
@@ -293,14 +310,8 @@ int main_genotype(int argc, char** argv) {
     // Genome Graph
     string inputGraphFileName = "graph.bin";  // 1
 
-    // sequencing data
-    vector<string> fastqFileNameVec;  // f
-
-    // output file
-    string outputFileName = "";  // o
-
-    // sample name
-    string sampleName = "out";  // s
+    // Sample configuration file
+    string samplesConfigFileName = "";  // s
 
     /* -------------------------------------------------- sample type -------------------------------------------------- */
     string sampleType = "het";  // g
@@ -314,7 +325,8 @@ int main_genotype(int argc, char** argv) {
     string transitionProType = "fre";  // m: Transition probability type
     bool svGenotypeBool = false;  // 4: structural variation genotyping only
     float minSupportingReads = 0.0;  // 5: min-support
-    
+    bool useDepth = false;  // 6: use sequencing depth as the depth for homozygous k-mers
+
     /* -------------------------------------------------- optional arguments -------------------------------------------------- */
     // Debug code
     bool debug = false;
@@ -330,8 +342,6 @@ int main_genotype(int argc, char** argv) {
         static const struct option long_options[] = 
 		{
             {"load-graph", required_argument, 0, 1},
-            {"fastq", required_argument, 0, 'f'},
-            {"out", required_argument, 0, 'o'},
             {"sample", required_argument, 0, 's'},
 
             {"genotype", required_argument, 0, 'g'},
@@ -343,6 +353,7 @@ int main_genotype(int argc, char** argv) {
             {"mode", required_argument, 0, 'm'},
             {"sv", no_argument, 0, 4},
             {"min-support", required_argument, 0, 5},
+            {"use-depth", no_argument, 0, 6},
             
             {"debug", no_argument, 0, 'D'},
             {"threads", required_argument, 0, 't'},
@@ -352,7 +363,7 @@ int main_genotype(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "1:f:o:s:g:2:n:3:m:45:Dt:h", long_options, &option_index);
+        c = getopt_long (argc, argv, "1:s:g:2:n:3:m:45:6Dt:h", long_options, &option_index);
 
         if (c == -1)
             break;
@@ -362,14 +373,8 @@ int main_genotype(int argc, char** argv) {
         case 1:
             inputGraphFileName = optarg;
             break;
-        case 'f':
-            fastqFileNameVec.push_back(optarg);
-            break;
-        case 'o':
-            outputFileName = optarg;
-            break;
         case 's':
-            sampleName = optarg;
+            samplesConfigFileName = optarg;
             break;
 
         case 'g':
@@ -394,6 +399,9 @@ int main_genotype(int argc, char** argv) {
             break;
         case 5:
             minSupportingReads = stof(optarg);
+            break;
+        case 6:
+            useDepth = true;
             break;
 
         case 'D':
@@ -425,8 +433,8 @@ int main_genotype(int argc, char** argv) {
         return 1;
     }
 
-    if (fastqFileNameVec.empty()) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -f. The reads file cannot be empty.\n\n";
+    if (samplesConfigFileName.empty()) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -s. The sample configuration file cannot be empty.\n\n";
         help_genotype(argv);
         return 1;
     }
@@ -471,6 +479,7 @@ int main_genotype(int argc, char** argv) {
 
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of threads: " << threads << endl;
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Genome graph file: " << inputGraphFileName << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample configuration file: " << samplesConfigFileName << endl;
 
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample genome status: " << sampleType << endl;
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample ploidy: " << samplePloidy << endl;
@@ -479,23 +488,28 @@ int main_genotype(int argc, char** argv) {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Chromosome granularity: " << chrLenThread << " bp" << endl;
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Transition probability type: " << transitionProType << endl;
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Structural variation genotyping only: " << (svGenotypeBool ? "Enabled" : "Disabled") << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Minimum site support: " << minSupportingReads << endl;    
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Minimum site support: " << minSupportingReads << endl;
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Use sequencing depth as the depth for homozygous k-mers: " << (useDepth ? "Enabled" : "Disabled") << endl;
 
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl << endl << endl;
 
     // construct, index and genotype
+    string refFileName = "";
+    string vcfFileName = "";
+    string outputGraphFileName = "";
+    bool fastMode = false;
     uint32_t kmerLen = 27;
     uint32_t vcfPloidy = 2;
+    bool useUniqueKmers = false;
+
     Varigraph VarigraphClass(
-        "", 
-        "", 
-        fastqFileNameVec, 
+        refFileName, 
+        vcfFileName, 
+        samplesConfigFileName, 
         inputGraphFileName, 
-        "", 
-        outputFileName, 
-        false, 
+        outputGraphFileName, 
+        fastMode, 
         kmerLen, 
-        sampleName, 
         sampleType, 
         samplePloidy, 
         vcfPloidy, 
@@ -505,17 +519,19 @@ int main_genotype(int argc, char** argv) {
         svGenotypeBool, 
         debug, 
         threads, 
-        minSupportingReads
+        minSupportingReads, 
+        useUniqueKmers, 
+        useDepth
     );
+
+    // parse the sample configuration file
+    VarigraphClass.parse_sample_config();
 
     // load the genome graph from file
     VarigraphClass.load();
 
-    // build the kmer index of files
-    VarigraphClass.kmer_read();
-
-    // genotype
-    VarigraphClass.genotype();
+    // fastq and genotype
+    VarigraphClass.fastq_genotype();
 
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Done ...\n\n\n";
 
@@ -527,14 +543,19 @@ int main_genotype(int argc, char** argv) {
 
 // help document
 void help_genotype(char** argv) {
-    cerr << "Usage: " << argv[0] << " " << argv[1] << " --load-graph FILE -f FILE [options]" << endl
+    cerr << "Usage: " << argv[0] << " " << argv[1] << " --load-graph FILE -s FILE [options]" << endl
          << "Perform genotyping and phasing based on k-mer counting." << endl
          << endl
          << "Input/Output Options:" << endl
          << "    --load-graph       FILE     load Genome Graph index from file generated by '" << argv[0] << " construct' [graph.bin]" << endl
-         << "    -f, --fastq        FILE     fastq files for index building, two are allowed, one for each mate" << endl
-         << "    -o, --out          FILE     output genotyping to FILE [stdout]" << endl
-         << "    -s, --sample       STRING   name the sample in the VCF with the given name [out]" << endl
+         << "    -s, --samples      FILE     Specify the samples configuration file, format: sample read1.fq.gz read2.fq.gz" << endl
+         << endl
+         << "Examples:"
+         << endl
+         << "  # To specify the samples configuration, use the following format in your samples file:" << endl
+         << "      sample1 sample1.1.fq.gz sample1.2.fq.gz" << endl
+         << "      sample2 sample2.1.fq.gz sample2.2.fq.gz" << endl
+         << "      ..." << endl
          << endl
          << "genome type:" << endl
          << "    -g, --genotype     STRING   specify the sample genotype as either 'hom' for homozygous or 'het' for heterozygous [het]" << endl
@@ -548,6 +569,7 @@ void help_genotype(char** argv) {
          << "    -m, --mode         STRING   using haplotype frequency (fre) or recombination rate (rec) as transition probability [fre]" << endl
          << "    --sv                        structural variation genotyping only" << endl
          << "    --min-support      FLOAT    minimum site support (N) for genotype [0]" << endl
+         << "    --use-depth                 use sequencing depth as the depth for homozygous k-mers" << endl
          << endl
          << "optional arguments:" << endl
          << "    -D, --debug                 enable debug code" << endl

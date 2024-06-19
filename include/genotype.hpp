@@ -70,7 +70,6 @@ namespace GENOTYPE
      * @param samplePloidy           sample ploidy
      * @param hapKmerCoverage        haplotype k-mer coverage
      * @param sampleName             sample name
-     * @param outputFileName         output filename
      * @param kmerLen
      * @param haploidNum             the haploid number for genotyping
      * @param chrLenThread           Chromosome granularity
@@ -93,7 +92,6 @@ namespace GENOTYPE
         const uint32_t& samplePloidy, 
         const float& hapKmerCoverage, 
         const string& sampleName, 
-        const string & outputFileName, 
         const uint32_t kmerLen, 
         uint32_t haploidNum, 
         uint32_t chrLenThread, 
@@ -215,10 +213,11 @@ namespace GENOTYPE
      * @param hapVec        Vector of haplotypes     
      * @param sampleType    specify the genotype of the sample genome (hom/het)
      * @param samplePloidy  sample ploidy (2-8) [2]
+     * @param maxHapIdx     Maximum haplotype index
      * 
      * @return ComHapVec
     **/
-    vector<vector<uint16_t> > increment_vector(const vector<uint16_t>& hapVec, const string& sampleType, const uint32_t& samplePloidy);
+    vector<vector<uint16_t> > increment_vector(const vector<uint16_t>& hapVec, const string& sampleType, const uint32_t& samplePloidy, const uint16_t& maxHapIdx);
 
 
     /**

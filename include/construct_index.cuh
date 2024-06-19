@@ -26,6 +26,7 @@ public:
         const string& inputGraphFileName, 
         const string& outputGraphFileName, 
         const bool& fastMode, 
+        const bool& useUniqueKmers, 
         const uint32_t& kmerLen, 
         const uint32_t& vcfPloidy, 
         const bool& debug, 
@@ -68,10 +69,11 @@ public:
  * 
  * @date 2024/04/29
  * 
- * @param chromosome            mGraphMap output by construct��map<chr, map<start, nodeSrt> >
+ * @param chromosome            mGraphMap output by construct  map<chr, map<start, nodeSrt> >
  * @param nodeIter              node iterator
  * @param startNodeMap          Chromosome all nodes
  * @param fastMode              fast mode
+ * @param useUniqueKmers        use unique kmers for indexing
  * @param kmerLen               the length of kmer
  * @param bfD                   Counting Bloom Filter on GPU
  * @param vcfPloidy             ploidy of genotypes in VCF file
@@ -84,6 +86,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
     map<uint32_t, nodeSrt>::iterator nodeIter, 
     const map<uint32_t, nodeSrt>& startNodeMap, 
     const bool& fastMode, 
+    const bool& useUniqueKmers,
     const uint32_t& kmerLen, 
     BloomFilterKernel* bfD, 
     const uint32_t& vcfPloidy, 

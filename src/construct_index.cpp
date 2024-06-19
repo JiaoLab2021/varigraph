@@ -20,12 +20,13 @@ ConstructIndex::ConstructIndex(
     const string& inputGraphFileName, 
     const string& outputGraphFileName, 
     const bool& fastMode, 
+    const bool& useUniqueKmers, 
     const uint32_t& kmerLen, 
     const uint32_t& vcfPloidy, 
     const bool& debug, 
     const uint32_t& threads
 ) : refFileName_(refFileName), vcfFileName_(vcfFileName), inputGraphFileName_(inputGraphFileName), outputGraphFileName_(outputGraphFileName), 
-    fastMode_(fastMode), mKmerLen(kmerLen), mVcfPloidy(vcfPloidy), threads_(threads) {
+    fastMode_(fastMode), useUniqueKmers_(useUniqueKmers), mKmerLen(kmerLen), mVcfPloidy(vcfPloidy), threads_(threads) {
 
     mHapMap[0] = "reference";
 
@@ -616,6 +617,7 @@ void ConstructIndex::index() {
                     iter, 
                     ref(startNodeMap), 
                     ref(fastMode_), 
+                    ref(useUniqueKmers_), 
                     ref(mKmerLen), 
                     mbf, 
                     ref(mVcfPloidy), 
@@ -635,9 +637,7 @@ void ConstructIndex::index() {
     for (auto& futureResult : futureVec) {  // vector<future<{nodeIter, KmerHapBitMap, kmerHashFreMap}> >
         auto [nodeIter, KmerHapBitMap, kmerHashFreMap] = move(futureResult.get());  // {nodeIter, KmerHapBitMap, kmerHashFreMap}
 
-        if (KmerHapBitMap.empty()) {
-            continue;
-        }
+        if (KmerHapBitMap.empty()) continue;
 
         // Node k-mer information
         auto& kmerHashVec = nodeIter->second.kmerHashVec;
@@ -1110,10 +1110,11 @@ void ConstructIndex::load_index() {
  * 
  * @date 2024/04/16
  * 
- * @param chromosome            mGraphMap output by construct��map<chr, map<start, nodeSrt> >
+ * @param chromosome            mGraphMap output by construct map<chr, map<start, nodeSrt> >
  * @param nodeIter              node iterator
  * @param startNodeMap          Chromosome all nodes
  * @param fastMode              fast mode
+ * @param useUniqueKmers        use unique k-mers for indexing
  * @param kmerLen               the length of kmer
  * @param bf                    Kmer frequency in the reference genome: Counting Bloom Filter
  * @param vcfPloidy             ploidy of genotypes in VCF file
@@ -1126,6 +1127,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
     map<uint32_t, nodeSrt>::iterator nodeIter, 
     const map<uint32_t, nodeSrt>& startNodeMap, 
     const bool& fastMode, 
+    const bool& useUniqueKmers,
     const uint32_t& kmerLen, 
     BloomFilter* bf, 
     const uint32_t& vcfPloidy, 
@@ -1214,7 +1216,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
             }
 
             // Update MIN_KMER_FRE if the frequency is greater than or equal to 2
-            if (frequency >= 2) {
+            if (frequency >= 2 && !useUniqueKmers) {
                 MIN_KMER_FRE = min(MIN_KMER_FRE, frequency);
             }
         }

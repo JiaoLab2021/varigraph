@@ -27,7 +27,6 @@ std::mutex mtxG;
  * @param samplePloidy           sample ploidy
  * @param hapKmerCoverage        haplotype k-mer coverage
  * @param sampleName             sample name
- * @param outputFileName         output filename
  * @param kmerLen
  * @param haploidNum             the haploid number for genotyping
  * @param chrLenThread           Chromosome granularity
@@ -50,7 +49,6 @@ int GENOTYPE::genotype(
     const uint32_t& samplePloidy, 
     const float& hapKmerCoverage, 
     const string& sampleName, 
-    const string & outputFileName, 
     const uint32_t kmerLen, 
     uint32_t haploidNum, 
     uint32_t chrLenThread, 
@@ -156,9 +154,10 @@ int GENOTYPE::genotype(
     // Close the thread pool
     pool.shutdown();
 
-    cerr << endl << endl;
+    cerr << endl;
 
     // save
+    string outputFileName = sampleName + ".varigraph.vcf.gz";
     GENOTYPE::save(GraphMap, vcfHead, vcfInfoMap, sampleName, outputFileName, minSupportingReads);
 
     return 0;
@@ -200,8 +199,7 @@ int GENOTYPE::for_bac_post_run(
     const string& transitionProType, 
     const bool& svGenotypeBool, 
     const map<string, map<uint32_t, vector<string> > >& vcfInfoMap
-)
-{
+) {
     string chromosome = startNodeIter->first;  // chromosome
 
     // Check if the chromosome is present in the VCF file
@@ -526,8 +524,7 @@ void GENOTYPE::haplotype_selection(
     const uint32_t haploidNum, 
     vector<uint16_t>& topHapVec, 
     unordered_map<uint16_t, double>& hapIdxScoreMap
-)
-{
+) {
     // If the number of haplotypes is less than haploidNum, skip screening
     if (hapMap.size() <= haploidNum) {
         for (const auto& pair : hapMap) {
@@ -631,8 +628,7 @@ vector<HHS> GENOTYPE::hidden_states(
     const double& upper, 
     const uint32_t& kmerLen, 
     bool filter
-)
-{
+) {
     // all haplotype combinations
     vector<HHS> HHSStrVec;  // vector<HHS>
 
@@ -649,7 +645,8 @@ vector<HHS> GENOTYPE::hidden_states(
     /* ============================================ Hidden states ============================================ */
 
     // Build a hidden matrix
-    vector<vector<uint16_t> > ComHapVec = increment_vector(topHapVec, sampleType, samplePloidy);
+    uint16_t maxHapIdx = hapIdxQRmap.size() - 1;  // Maximum haplotype index
+    vector<vector<uint16_t> > ComHapVec = increment_vector(topHapVec, sampleType, samplePloidy, maxHapIdx);
     for (const auto& hapVec : ComHapVec) {
         HHS HHSStr;
         // Record haplotypes combined into hapVec
@@ -658,8 +655,7 @@ vector<HHS> GENOTYPE::hidden_states(
     }
 
     // All k-mer information of this node
-    for (const auto& GraphKmerHashHapStrMapIter : node.GraphKmerHashHapStrMapIterVec) {
-
+    for (const auto& GraphKmerHashHapStrMapIter : node.GraphKmerHashHapStrMapIterVec) {  // vector<iter>
         // k-mer information
         const uint8_t& c = GraphKmerHashHapStrMapIter->second.c;
         const uint8_t& f = GraphKmerHashHapStrMapIter->second.f;
@@ -699,7 +695,7 @@ vector<HHS> GENOTYPE::hidden_states(
             HSStr.c = c;
 
             for (const auto& hapIdx : HHSStr.hapVec) {  // vector<hapIdx>
-                
+
                 const auto& QR = hapIdxQRmap.at(hapIdx);
 
                 // If the k-mer does fall within this interval, it is considered to be present in the genotype 0 haplotype of the current node; otherwise, it is not present.
@@ -832,17 +828,18 @@ vector<HHS> GENOTYPE::hidden_states(
  * @param hapVec        Vector of haplotypes     
  * @param sampleType    specify the genotype of the sample genome (hom/het)
  * @param samplePloidy  sample ploidy (2-8) [2]
+ * @param maxHapIdx     Maximum haplotype index
  * 
  * @return ComHapVec
 **/
 vector<vector<uint16_t> > GENOTYPE::increment_vector(
     const vector<uint16_t>& hapVec, 
     const string& sampleType, 
-    const uint32_t& samplePloidy
+    const uint32_t& samplePloidy, 
+    const uint16_t& maxHapIdx
 ) {
     // combination of haplotype name
     vector<vector<uint16_t> > ComHapVec;
-
 
     /* ----------------------------------------------------------- Polyploidy ----------------------------------------------------------- */
     // Polyploidy, sample haplotype combination
@@ -859,8 +856,13 @@ vector<vector<uint16_t> > GENOTYPE::increment_vector(
                 uint16_t firstHap = (quotient - 1) * samplePloidy + 1;
             
                 iota(hapVecTmp.begin(), hapVecTmp.end(), firstHap);
+
+                // Ensure haplotype index greater than maxHapIdx are set to 0
+                for (auto& val : hapVecTmp) {
+                    if (val > maxHapIdx) val = 0;
+                }
             }
-            ComHapVec.push_back(hapVecTmp);
+            ComHapVec.push_back(std::move(hapVecTmp));
         }
 
         // sort and deduplication
@@ -1469,7 +1471,6 @@ int GENOTYPE::posterior(
 
     // Memory Deallocation
     vector<HMMScore>().swap((*nodePtr).HMMScoreVec);
-    vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>().swap((*nodePtr).GraphKmerHashHapStrMapIterVec);
 
     return 0;
 }
@@ -1487,8 +1488,7 @@ int GENOTYPE::posterior(
 **/
 uint8_t GENOTYPE::get_UK(
     const vector<unordered_map<uint64_t, kmerCovFreBitVec>::const_iterator>& GraphKmerHashHapStrMapIterVec
-)
-{
+) {
     uint8_t uniqueKmerNum = 0;
     
     for (const auto& GraphKmerHashHapStrMapIter : GraphKmerHashHapStrMapIterVec) {  // use structured bindings to access only the key
@@ -1538,7 +1538,7 @@ int GENOTYPE::save(
     const string & outputFileName, 
     const float& minSupportingReads
 ) {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Wrote genotyped variants to '" << outputFileName << "' \n\n\n";
+    cerr << "[" << __func__ << "::" << getTime() << "] " << "Wrote genotyped variants to '" << outputFileName << "' \n\n";
 
     std::stringstream oss;
     static const uint64_t CACHE_SIZE = 1024 * 1024 * 10;  // Cache size is 10mb

@@ -18,6 +18,7 @@ void VarigraphKernel::construct_kernel() {
         inputGraphFileName_, 
         outputGraphFileName_, 
         fastMode_, 
+        useUniqueKmers_, 
         kmerLen_, 
         vcfPloidy_, 
         debug_, 
@@ -54,18 +55,46 @@ void VarigraphKernel::construct_kernel() {
 }
 
 /**
+ * @brief fastq and genotype
+ * 
+ * @return void
+*/
+void VarigraphKernel::fastq_genotype_kernel() {
+    // Merge k-mer information from Genome Graph into nodes.
+    ConstructIndexClassPtr_->graph2node();
+
+    // fastq and genotype
+    for (const auto& [sampleName, fastqFileNameVec] : sampleConfigTupleVec_) {  // vector<tuple<sampleName, vector<readPath> > >
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Processing sample: " << sampleName << endl << endl;
+
+        // fastq
+        kmer_read_kernel(fastqFileNameVec);
+
+        // genotype
+        genotype(sampleName);
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample: " << sampleName << " has been processed." << endl << endl << endl;
+
+        // Reset ConstructIndexClassPtr_
+        ConstructIndexClassPtr_->reset();
+    }
+}
+
+/**
  * @author zezhen du
  * @date 2024/04/30
  * @version v1.0.1
  * @brief build the kmer index of files
  * 
+ * @param fastqFileNameVec    Sequencing data
+ * 
  * @return void
 **/
-void VarigraphKernel::kmer_read_kernel() {
+void VarigraphKernel::kmer_read_kernel(vector<string> fastqFileNameVec) {
     // Computing the frequency of variants and noisy k-mers
     FastqKmerKernel FastqKmerKernelClass(
         ConstructIndexClassPtr_->mGraphKmerHashHapStrMap, 
-        fastqFileNameVec_, 
+        fastqFileNameVec, 
         kmerLen_, 
         threads_, 
         buffer_
@@ -86,7 +115,4 @@ void VarigraphKernel::kmer_read_kernel() {
     cerr << "           - " << "Depth of the sequenced data: " << ReadDepth_ << endl;
     cerr << "           - " << "Coverage of haplotype k-mers: " << hapKmerCoverage_ << endl << endl << endl;
     cerr << defaultfloat << setprecision(6);
-
-    // Merge k-mer information from Genome Graph into nodes.
-    ConstructIndexClassPtr_->graph2node();
 }

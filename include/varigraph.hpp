@@ -7,6 +7,7 @@
 #include <locale>
 #include <getopt.h>
 #include <tuple>
+#include <filesystem>
 
 #include "construct_index.hpp"
 #include "fastq_kmer.hpp"
@@ -20,18 +21,20 @@ protected:
     // input file name
     const string& refFileName_;  // refgenome files
     const string& vcfFileName_;  // The name of the input VCF file.
-    const vector<string>& fastqFileNameVec_;  // the vector of sequencing read files
+
+    // Sample configuration file
+    const string& samplesConfigFileName_;  // The name of the input sample configuration file.
+    vector<tuple<string, vector<string> > > sampleConfigTupleVec_;  // Store sample configuration information. vector<tuple<sampleName, vector<readPath> > >
+
     const string& inputGraphFileName_;  // load the Genome Geaph from disk
 
     // output file name
     const string& outputGraphFileName_;  // save the Genome Geaph to disk
-    const string& outputFileName_;  // save the genotyping result to disk
 
     // fast mode
     const bool& fastMode_;
 
     uint32_t& kmerLen_;  // the length of k-mer
-    const string& sampleName_;  // the sampleName_ of the sequencing reads
     const string& sampleType_;  // specify the genotype of the reference genome (hom/het)
     const uint32_t& samplePloidy_;  // genome ploidy
     uint32_t& vcfPloidy_;  // ploidy of genotypes in VCF file
@@ -47,6 +50,9 @@ protected:
 
     const float& minSupportingReads_;  // the minimum number of supporting reads for a variant
 
+    const bool& useUniqueKmers_;  // use only unique k-mers for indexing
+    const bool& useDepth_;  // use sequencing depth as the depth for homozygous k-mers
+
     ConstructIndex* ConstructIndexClassPtr_ = nullptr;  // Record the index of graph and reference genome
 
     map<string, map<uint32_t, string> > vcfInfoMap_;  // Store VCF file information
@@ -57,13 +63,11 @@ public:
     Varigraph(
         const string& refFileName, 
         const string& vcfFileName, 
-        const vector<string>& fastqFileNameVec, 
+        const string& samplesConfigFileName, 
         const string& inputGraphFileName, 
         const string& outputGraphFileName, 
-        const string& outputFileName, 
         const bool& fastMode, 
         uint32_t& kmerLen, 
-        const string& sampleName, 
         const string& sampleType, 
         const uint32_t& samplePloidy, 
         uint32_t& vcfPloidy, 
@@ -73,7 +77,9 @@ public:
         const bool& svGenotypeBool, 
         const bool& debug, 
         const uint32_t& threads, 
-        const float& minSupportingReads
+        const float& minSupportingReads, 
+        const bool& useUniqueKmers, 
+        const bool& useDepth
     );
     ~Varigraph() {
         if (ConstructIndexClassPtr_ != nullptr) {
@@ -93,7 +99,6 @@ public:
     **/
     void construct();
 
-
     /**
      * @author zezhen du
      * @date 2024/01/04
@@ -104,6 +109,19 @@ public:
     **/
     void load();
 
+    /**
+     * @brief Parse sample configuration file (sampleName, readPath1, readPath2)
+     * 
+     * @return void
+    */
+    void parse_sample_config();
+
+    /**
+     * @brief fastq and genotype
+     * 
+     * @return void
+    */
+    void fastq_genotype();
 
     /**
      * @author zezhen du
@@ -111,10 +129,11 @@ public:
      * @version v1.0.1
      * @brief build the kmer index of files
      * 
+     * @param fastqFileNameVec    Sequencing data
+     * 
      * @return void
     **/
-    void kmer_read();
-
+    void kmer_read(vector<string> fastqFileNameVec);
 
     /**
      * @author zezhen du
@@ -185,10 +204,11 @@ public:
      * @version v1.0.1
      * @brief genotype
      * 
+     * @param sampleName
      * 
      * @return void
     **/
-    void genotype();
+    void genotype(string sampleName);
 };
 
 #endif
