@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+env:
+  BUILD_TYPE: Release
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
+
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libz-dev
+        # Additional steps for installing CUDA Toolkit if needed
+
+    - name: Set up CMake
+      run: |
+        sudo apt-get install -y cmake
+        cmake --version
+
+    - name: Install CUDA Toolkit
+      run: |
+        # Create a temporary directory in the user's home directory
+        mkdir -p ~/temp_trusted_gpg
+        export GNUPGHOME=~/temp_trusted_gpg
+    
+        # Import NVIDIA GPG key
+        gpg --keyserver keyserver.ubuntu.com --recv-keys A4B469963BF863CC
+        gpg --export --armor A4B469963BF863CC | sudo apt-key add -
+    
+        # Cleanup temporary directory
+        rm -rf ~/temp_trusted_gpg
+
+        # Download and install CUDA Toolkit
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2004/x86_64/cuda-ubuntu2004.pin
+        sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
+        wget https://developer.download.nvidia.com/compute/cuda/12.4.1/local_installers/cuda-repo-ubuntu2004-12-4-local_12.4.1-550.54.15-1_amd64.deb
+        sudo dpkg -i cuda-repo-ubuntu2004-12-4-local_12.4.1-550.54.15-1_amd64.deb
+        sudo cp /var/cuda-repo-ubuntu2004-12-4-local/cuda-*-keyring.gpg /usr/share/keyrings/
+        sudo apt-get update
+        sudo apt-get -y install cuda-toolkit-12-4
+
+        # Set CUDA Toolkit root directory
+        #export CUDAToolkit_ROOT=/usr/local/cuda
+        #export PATH=/usr/local/cuda/bin:$PATH
+
+    - name: Configure and build project
+      run: |
+        cmake . -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} -DCUDA_ARCHITECTURES=75 -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc
+        make
