@@ -310,7 +310,7 @@ public:
     /** *
      * @brief Reset variables
      * 
-     * @date 2024/07/10
+     * @date 2024/07/09
      * 
      * @return void
     */

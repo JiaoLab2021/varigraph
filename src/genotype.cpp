@@ -1501,8 +1501,8 @@ int GENOTYPE::posterior(
             posteriorInfo.kmerAveCovVec.clear();  // // The k-mer average depth corresponding to the haplotype
 
             for (const auto& hapIdx : posteriorInfo.hapVec) {
-                uint64_t kmerNum = get<0>(hapIdxKmerInfoMap.at(hapIdx));
-                float kmerAveCov = (kmerNum != 0) ? static_cast<float>(get<1>(hapIdxKmerInfoMap.at(hapIdx))) / (float)kmerNum : 0.0;
+                uint64_t kmerNum = get<0>(hapIdxKmerInfoMap[hapIdx]);
+                float kmerAveCov = (kmerNum != 0) ? static_cast<float>(get<1>(hapIdxKmerInfoMap[hapIdx])) / (float)kmerNum : 0.0;
                 posteriorInfo.kmerNumVec.push_back(kmerNum);
                 posteriorInfo.kmerAveCovVec.push_back(kmerAveCov);
             }
