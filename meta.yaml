@@ -1,0 +1,30 @@
+package:
+  name: varigraph
+  version: 1.0.7
+
+source:
+  path: .
+
+requirements:
+  build:
+    - cmake >=3.12
+    - gcc >=7.3.0
+    - zlib
+
+  run:
+    - cmake >=3.12
+    - gcc >=7.3.0
+    - zlib
+
+channels:
+    - bioconda
+    - defaults
+
+about:
+  home: https://github.com/JiaoLab2021/varigraph
+  license: MIT
+  summary: A fast and resource-efficient genome graph genotyping tool
+
+extra:
+  recipe-maintainers:
+    - duzezhen

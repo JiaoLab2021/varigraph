@@ -96,16 +96,16 @@ int GENOTYPE::genotype(
             chrLen = findIter->second;  // chromosome length
         }
 
-        chrLenThread = min(chrLenThread, chrLen);  // Prevent chromosome granularity from being larger than chromosome length
+        uint32_t chrLenThreadTmp = min(chrLenThread, chrLen);  // Prevent chromosome granularity from being larger than chromosome length
 
-        uint32_t stepsNumber = ceil(double(chrLen)/chrLenThread);  // Step count
+        uint32_t stepsNumber = ceil(double(chrLen)/chrLenThreadTmp);  // Step count
 
         // End position of thread
         uint32_t threadEndTmp = 0;
 
         // Submit tasks in a loop
         for (uint32_t i = 0; i < stepsNumber; i++) {
-            uint32_t stepEnd = (i + 1) * chrLenThread;
+            uint32_t stepEnd = (i + 1) * chrLenThreadTmp;
 
             // End position of previous window
             uint32_t threadStart = threadEndTmp;
@@ -255,10 +255,10 @@ int GENOTYPE::for_bac_post_run(
     uint32_t preNodeEnd = 0;  // The ending position of the previous node
     // forward
     for (map<uint32_t, nodeSrt>::iterator iter1 = newStartNodeIterL; iter1 != newStartNodeIterR; iter1++) {  // map<nodeStart, nodeSrt>
+        if (iter1->second.hapGtVec.size() <= 1) continue;  // If small than 1, skip the node
+
         uint32_t nodeStart = iter1->first;  // the starting position of the node
         uint32_t nodeEnd = nodeStart + iter1->second.seqVec[0].size() - 1;  // end position of the node
-
-        if (iter1->second.hapGtVec.size() == 1) {continue;}  // If only 0, skip the node
 
         // Check if only structural variants are genotyped
         if (svGenotypeBool) {
@@ -381,10 +381,10 @@ int GENOTYPE::for_bac_post_run(
     preNodeStart = 0;  // The start position of the previous node
     preNodeEnd = 0;  // The ending position of the previous node
     for (std::map<uint32_t, nodeSrt>::reverse_iterator iter1 = std::map<uint32_t, nodeSrt>::reverse_iterator(newStartNodeIterR); iter1 != std::map<uint32_t, nodeSrt>::reverse_iterator(newStartNodeIterL); ++iter1) {
+        if (iter1->second.hapGtVec.size() <= 1) continue;  // If small than 1, skip the node
+
         uint32_t nodeStart = iter1->first;  // the starting position of the node
         uint32_t nodeEnd = nodeStart + iter1->second.seqVec[0].size() - 1;  // end position of the node
-
-        if (iter1->second.hapGtVec.size() == 1) {continue;}  // If only 0, skip the node
 
         // Check if only structural variants are genotyped
         if (svGenotypeBool) {
@@ -474,7 +474,7 @@ int GENOTYPE::for_bac_post_run(
 
     /* ************************************************** posterior ************************************************** */
     for (map<uint32_t, nodeSrt>::iterator iter1 = newStartNodeIterL; iter1 != newStartNodeIterR; iter1++) {  // map<nodeStart, nodeSrt>
-        if (iter1->second.hapGtVec.size() == 1) {continue;}  // If only 0, skip the node
+        if (iter1->second.hapGtVec.size() <= 1) continue;  // If small than 1, skip the node
 
         // Check if only structural variants are genotyped
         if (svGenotypeBool) {
@@ -1598,12 +1598,24 @@ int GENOTYPE::save(
     SAVE SAVEClass(outputFileName);
 
     for (const auto& [chromosome, startVcfInfoMap] : vcfInfoMap) {
+        // Check if the chromosome is in the posterior probability table
+        auto findIter1 = GraphMap.find(chromosome);
+        if (findIter1 == GraphMap.end()) {
+            continue;
+        }
+
         for (const auto& [nodeStart, vcfInfo] : startVcfInfoMap) {
+            // Check if the node is in the posterior probability table
+            auto findIter2 = findIter1->second.find(nodeStart);
+            if (findIter2 == findIter1->second.end()) {
+                continue;
+            }
+
             // Variable binding
-            const auto& hapGtVec = GraphMap[chromosome][nodeStart].hapGtVec;
+            const auto& hapGtVec = findIter2->second.hapGtVec;
 
             // Check if it is in the posterior probability table, if yes, add the corresponding genotype, otherwise ./.
-            const auto& posteriorInfo = GraphMap[chromosome][nodeStart].posteriorInfo;
+            const auto& posteriorInfo = findIter2->second.posteriorInfo;
 
             if (posteriorInfo.hapVec.size() > 0) {
                 // genotyping result

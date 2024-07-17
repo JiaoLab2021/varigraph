@@ -254,7 +254,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
     const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap
 ) {
     // Minimum k-mer frequency
-    uint8_t MIN_KMER_FRE = 1;
+    uint8_t MIN_KMER_FRE = UINT8_MAX;
     unordered_map<uint64_t, pair<vector<int8_t>, uint8_t > > KmerHapBitFrePairMap;  // map<kmerHash, pair<vector<int8_t>, frequence > >
 
     unordered_map<uint64_t, vector<int8_t> > KmerHapBitMap;  // kmer: map<kmerHash, vector<int8_t> >:  0000 0000, Each bits represents a haplotype, 0->False 1->True
@@ -335,10 +335,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
                 }
             }
 
-            // Update MIN_KMER_FRE if the frequency is greater than or equal to 2
-            if (frequency >= 2 && !useUniqueKmers) {
-                MIN_KMER_FRE = min(MIN_KMER_FRE, frequency);
-            }
+            MIN_KMER_FRE = min(MIN_KMER_FRE, frequency);
         }
 
         // clear memory (freKmerHashSetMap)
@@ -346,6 +343,11 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
 
         // Haplotype index increment
         ++haplotype;
+    }
+
+    // Minimum k-mer frequency
+    if (MIN_KMER_FRE == 0 || useUniqueKmers) {
+        MIN_KMER_FRE = 1;
     }
 
     // Transfer k-mers with frequency <= MIN_KMER_FRE to KmerHapBitMap
