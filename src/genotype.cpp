@@ -34,7 +34,7 @@ std::mutex mtxG;
  * @param svGenotypeBool         structural variation genotyping only
  * @param threads
  * @param debug
- * @param minSupportingReads     the minimum number of supporting reads for a variant
+ * @param minSupportingGQ        minimum site quality (GQ) value for genotype
  * 
  * @return 0
 **/
@@ -56,7 +56,7 @@ int GENOTYPE::genotype(
     const bool& svGenotypeBool, 
     uint32_t threads, 
     const bool & debug, 
-    const float & minSupportingReads
+    const float & minSupportingGQ
 ) {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Genotyping ...\n";  // print log
 
@@ -158,7 +158,7 @@ int GENOTYPE::genotype(
 
     // save
     string outputFileName = sampleName + ".varigraph.vcf.gz";
-    GENOTYPE::save(GraphMap, vcfHead, vcfInfoMap, sampleName, outputFileName, minSupportingReads);
+    GENOTYPE::save(GraphMap, vcfHead, vcfInfoMap, sampleName, outputFileName, minSupportingGQ);
 
     return 0;
 }
@@ -1572,7 +1572,7 @@ double GENOTYPE::cal_phred_scaled(long double value) {
  * @param vcfInfoMap          vcf information, for output
  * @param sampleName          sample name
  * @param outputFileName      output file information
- * @param minSupportingReads  minimum number of supporting reads
+ * @param minSupportingGQ     minimum site quality (GQ) value for genotype
  * 
  * @return 0
 **/
@@ -1582,7 +1582,7 @@ int GENOTYPE::save(
     map<string, map<uint32_t, vector<string> > > & vcfInfoMap, 
     const string& sampleName, 
     const string & outputFileName, 
-    const float& minSupportingReads
+    const float& minSupportingGQ
 ) {
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Wrote genotyped variants to '" << outputFileName << "' \n\n";
 
@@ -1644,25 +1644,19 @@ int GENOTYPE::save(
                     }
                 }
 
-                // mis site
-                bool misBool = false;
-                if (+posteriorInfo.uniqueKmerNum > 0 && minSupportingReads > 0.0) {
-                    for (auto kmerAveCovTmp : posteriorInfo.kmerAveCovVec) {
-                        if (kmerAveCovTmp < minSupportingReads) {
-                            misBool = true;
-                            break;
-                        }
-                    }
-                }
-                if (misBool) {
+                // Genotype quality (phred-scaled 1 - max(GPP)) (GQ)
+                float GQ = cal_phred_scaled(posteriorInfo.probability);
+
+                // missing site
+                if (GQ < minSupportingGQ) {
                     std::fill(gtTxtVec.begin(), gtTxtVec.end(), ".");
                 }
 
                 // Genotype
                 oss << "\t" << join(gtTxtVec, "/");
                 
-                // Genotype quality (phred-scaled 1 - max(GPP)), Genotype posterior probabilities, Number of allele k-mers
-                oss << ":" << cal_phred_scaled(posteriorInfo.probability) << ":" 
+                // Genotype quality , Genotype posterior probabilities, Number of allele k-mers
+                oss << ":" << GQ << ":" 
                     << posteriorInfo.probability << ":" 
                     << join(posteriorInfo.kmerNumVec, ",") << ":" ;
                 

@@ -3,36 +3,6 @@
 #include "../include/varigraph.hpp"
 
 
-Varigraph::Varigraph(
-    const string& refFileName, 
-    const string& vcfFileName, 
-    const string& samplesConfigFileName, 
-    const string& inputGraphFileName, 
-    const string& outputGraphFileName, 
-    const bool& fastMode, 
-    uint32_t& kmerLen, 
-    const string& sampleType, 
-    const uint32_t& samplePloidy, 
-    uint32_t& vcfPloidy, 
-    const uint32_t& haploidNum, 
-    const uint32_t& chrLenThread, 
-    const string& transitionProType, 
-    const bool& svGenotypeBool, 
-    const bool& debug, 
-    const uint32_t& threads, 
-    const float& minSupportingReads, 
-    const bool& useUniqueKmers, 
-    const bool& useDepth
-) : refFileName_(refFileName), vcfFileName_(vcfFileName), samplesConfigFileName_(samplesConfigFileName), inputGraphFileName_(inputGraphFileName), 
-    outputGraphFileName_(outputGraphFileName), 
-    fastMode_(fastMode), kmerLen_(kmerLen), sampleType_(sampleType), samplePloidy_(samplePloidy), vcfPloidy_(vcfPloidy), haploidNum_(haploidNum), 
-    chrLenThread_(chrLenThread), transitionProType_(transitionProType), svGenotypeBool_(svGenotypeBool), debug_(debug), threads_(threads), 
-    minSupportingReads_(minSupportingReads), useUniqueKmers_(useUniqueKmers), useDepth_(useDepth) {
-    // cerr
-    std::cerr.imbue(std::locale(""));  // Thousandth output
-}
-
-
 /**
  * @author zezhen du
  * @date 2024/01/04
@@ -461,6 +431,6 @@ void Varigraph::genotype(string sampleName) {
         svGenotypeBool_, 
         threads_, 
         debug_, 
-        minSupportingReads_
+        minSupportingGQ_
     );
 }

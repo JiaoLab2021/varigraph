@@ -13,9 +13,9 @@ using namespace std;
 
 
 // define data
-#define PROGRAM_DATA "2024/07/17"
+#define PROGRAM_DATA "2024/09/25"
 // define version
-#define PROGRAM_VERSION "1.0.7"
+#define PROGRAM_VERSION "1.0.8"
 // define author
 #define PROGRAM_AUTHOR "Zezhen Du"
 // define E-mail
@@ -75,38 +75,8 @@ int main_construct(int argc, char** argv) {
     // initial time
     double realtime0 = realtime();
 
-    /* -------------------------------------------------- input/output -------------------------------------------------- */
-    // reference genome
-    string refFileName;  // r
-
-    // VCF file
-	string vcfFileName;  // v
-
-    // Genome Graph
-    string outputGraphFileName = "graph.bin";  // 1
-
-    /* -------------------------------------------------- ploidy -------------------------------------------------- */
-    uint32_t vcfPloidy = 2;  // 2
-
-    /* -------------------------------------------------- algorithm arguments -------------------------------------------------- */
-	// k-mer size
-	uint32_t kmerLen = 27;  // k
-
-    // fast mode
-    bool fastMode = false;  // 3
-
-    bool useUniqueKmers = false; // 4: use only unique k-mers for indexing
-
-    /* -------------------------------------------------- gpu arguments -------------------------------------------------- */
-    int gpu = 0;  // 5
-    int buffer = 100;  // 6
-    
-    /* -------------------------------------------------- optional arguments -------------------------------------------------- */
-    // Debug code
-    bool debug = false;  // D
-
-	// thread
-	uint32_t threads = 10;  // t
+    // Varigraph configuration
+    VarigraphKernelConfig config;
 
 	// Input parameter
     int c;
@@ -115,22 +85,23 @@ int main_construct(int argc, char** argv) {
     {
         static const struct option long_options[] = 
 		{
-            {"reference", required_argument, 0, 'r'},
-			{"vcf", required_argument, 0, 'v'},
-            {"save-graph", required_argument, 0, 1},
-
-            {"vcf-ploidy", required_argument, 0, 2},
-
-            {"kmer", required_argument, 0, 'k'},
-            {"fast", no_argument, 0, 3},
-            {"use-unique-kmers", no_argument, 0, 4},
-
-            {"gpu", required_argument, 0, 5},
-            {"buffer", required_argument, 0, 6},
-
-            {"debug", no_argument, 0, 'D'},
-            {"threads", required_argument, 0, 't'},
-            {"help", no_argument, 0, 'h'},
+            /* -------------------------------------------------- input/output -------------------------------------------------- */
+            {"reference", required_argument, 0, 'r'},    // refFileName
+			{"vcf", required_argument, 0, 'v'},          // vcfFileName
+            {"save-graph", required_argument, 0, 1},     // outputGraphFileName
+            /* -------------------------------------------------- ploidy -------------------------------------------------- */
+            {"vcf-ploidy", required_argument, 0, 2},     // vcfPloidy
+            /* -------------------------------------------------- algorithm arguments -------------------------------------------------- */
+            {"kmer", required_argument, 0, 'k'},         // kmerLen
+            {"fast", no_argument, 0, 3},                 // fastMode
+            {"use-unique-kmers", no_argument, 0, 4},     // useUniqueKmers
+            /* -------------------------------------------------- gpu arguments -------------------------------------------------- */
+            {"gpu", required_argument, 0, 5},            // gpu
+            {"buffer", required_argument, 0, 6},         // buffer
+            /* -------------------------------------------------- optional arguments -------------------------------------------------- */
+            {"debug", no_argument, 0, 'D'},              // debug
+            {"threads", required_argument, 0, 't'},      // threads
+            {"help", no_argument, 0, 'h'},               // help
             {0, 0, 0, 0}
         };
 
@@ -144,41 +115,41 @@ int main_construct(int argc, char** argv) {
         switch (c)
         {
         case 'r':
-            refFileName = optarg;
+            config.refFileName = optarg;
             break;
         case 'v':
-            vcfFileName = optarg;
+            config.vcfFileName = optarg;
             break;
         case 1:
-            outputGraphFileName = optarg;
+            config.outputGraphFileName = optarg;
             break;
 
         case 2:
-            vcfPloidy = max(stoi(optarg), 2);
+            config.vcfPloidy = max(stoi(optarg), 2);
             break;
 
         case 'k':
-            kmerLen = max(stoi(optarg), 5);
+            config.kmerLen = max(stoi(optarg), 5);
             break;
         case 3:
-            fastMode = true;
+            config.fastMode = true;
             break;
         case 4:
-            useUniqueKmers = true;
+            config.useUniqueKmers = true;
             break;
 
         case 5:
-            gpu = stoi(optarg);
+            config.gpu = stoi(optarg);
             break;
         case 6:
-            buffer = stoi(optarg);
+            config.buffer = stoi(optarg);
             break;
 
         case 'D':
-            debug = true;
+            config.debug = true;
             break;
         case 't':
-            threads = max(stoi(optarg), 1);
+            config.threads = max(stoi(optarg), 1);
             break;
 
         case 'h':
@@ -197,113 +168,67 @@ int main_construct(int argc, char** argv) {
     }
 
     // Validate the parameters
-    if (refFileName.empty()) {
+    if (config.refFileName.empty()) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -r. The reference genome file cannot be empty.\n\n";
         help_construct(argv);
         return 1;
     }
 
-    if (vcfFileName.empty()) {
+    if (config.vcfFileName.empty()) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -v. The VCF file cannot be empty.\n\n";
         help_construct(argv);
         return 1;
     }
 
-    if (outputGraphFileName.empty()) {
+    if (config.outputGraphFileName.empty()) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --save-graph. The Genome Graph file cannot be empty.\n\n";
         help_construct(argv);
         return 1;
     }
 
-    if (vcfPloidy <= 0 || vcfPloidy > 8) {
+    if (config.vcfPloidy <= 0 || config.vcfPloidy > 8) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --vcf-ploidy. The provided value must be between 2 and 8 (inclusive).\n\n";
         help_construct(argv);
         return 1;
     }
 
-    if (kmerLen <= 0 || kmerLen > 28) {
+    if (config.kmerLen <= 0 || config.kmerLen > 28) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -k. The provided value must be between 1 and 28 (inclusive).\n\n";
         help_construct(argv);
         return 1;
     }
 
-    if (gpu < 0) {
+    if (config.gpu < 0) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --gpu. The provided value must be greater than or equal to 0.\n\n";
         help_construct(argv);
         return 1;
     }
 
-    if (buffer <= 0) {
+    if (config.buffer <= 0) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --buffer. The provided value must be greater than 0.\n\n";
         help_construct(argv);
         return 1;
-    } else if (buffer > 1000) {
+    } else if (config.buffer > 1000) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: --buffer. The buffer size is relatively large, which may consume a large amount of GPU memory.\n\n";
     }
     
     // print log
     cerr << "[" << __func__ << "::" << getTime() << "] " << "You are now running varigraph (v" << PROGRAM_VERSION << ").\n\n\n";
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Execution started ..." << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of threads: " << threads << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "k-mer size: " << kmerLen << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Reference file path: " << refFileName << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Variants file path: " << vcfFileName << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Ploidy of genotypes in the VCF file: " << vcfPloidy << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Selected GPU ID: " << gpu << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "GPU buffer size: " << buffer << " MB" << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Fast mode: " << (fastMode ? "Enabled" : "Disabled") << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Use only unique k-mers for indexing: " << (useUniqueKmers ? "Enabled" : "Disabled") << endl;
+    config.logConstructionConfigKernel();  // print configuration log
 
     // select the GPU device
-    cudaSetDevice(gpu);
+    cudaSetDevice(config.gpu);
     // get the GPU device properties
     cudaDeviceProp deviceProp;
-    cudaGetDeviceProperties(&deviceProp, gpu);
+    cudaGetDeviceProperties(&deviceProp, config.gpu);
     cerr << endl;
     cerr << "           - " << "Selected GPU: " << deviceProp.name << endl;
     cerr << "           - " << "Compute capability: " << deviceProp.major << "." << deviceProp.minor << endl;
     cerr << "           - " << "GPU memory: " << deviceProp.totalGlobalMem / 1024 / 1024 / 1024 << " GB" << endl << endl << endl;
 
     // construct
-    string samplesConfigFileName = "";
-    string inputGraphFileName = "";
-    string sampleType = "het";
-    uint32_t samplePloidy = 2;
-    uint32_t haploidNum = 15;
-    uint32_t chrLenThread = 1 * 1000 * 1000;
-    string transitionProType = "fre";
-    bool svGenotypeBool = false;
-    float minSupportingReads = 0.0;
-    bool useDepth = false;  // 6: use sequencing depth as the depth for homozygous k-mers
-
-    VarigraphKernel VarigraphKernelClass(
-        refFileName, 
-        vcfFileName, 
-        samplesConfigFileName, 
-        inputGraphFileName, 
-        outputGraphFileName, 
-        fastMode, 
-        kmerLen, 
-        sampleType, 
-        samplePloidy, 
-        vcfPloidy, 
-        haploidNum, 
-        chrLenThread, 
-        transitionProType, 
-        svGenotypeBool, 
-        debug, 
-        threads, 
-        minSupportingReads, 
-        useUniqueKmers, 
-        useDepth, 
-        buffer
-    );
+    VarigraphKernel VarigraphKernelClass(config);
 
     // build the kmer index of reference and construct graph
     VarigraphKernelClass.construct_kernel();
@@ -350,37 +275,8 @@ int main_genotype(int argc, char** argv) {
     // initial time
     double realtime0 = realtime();
 
-    /* -------------------------------------------------- input/output -------------------------------------------------- */
-    // Genome Graph
-    string inputGraphFileName = "graph.bin";  // 1
-
-    // Sample configuration file
-    string samplesConfigFileName = "";  // s
-
-    /* -------------------------------------------------- sample type -------------------------------------------------- */
-    string sampleType = "het";  // g
-
-    /* -------------------------------------------------- ploidy -------------------------------------------------- */
-    uint32_t samplePloidy = 2;  // 2
-
-    /* -------------------------------------------------- genotyping arguments -------------------------------------------------- */
-    uint32_t haploidNum = 15;  // n
-    uint32_t chrLenThread = 1 * 1000 * 1000;  // 3
-    string transitionProType = "fre";  // m: Transition probability type
-    bool svGenotypeBool = false;  // 4: structural variation genotyping only
-    float minSupportingReads = 0.0;  // 5: min-support
-    bool useDepth = false;  // 6: use sequencing depth as the depth for homozygous k-mers
-
-    /* -------------------------------------------------- gpu arguments -------------------------------------------------- */
-    int gpu = 0;  // 7
-    int buffer = 500;  // 8
-    
-    /* -------------------------------------------------- optional arguments -------------------------------------------------- */
-    // Debug code
-    bool debug = false;
-
-	// thread
-	uint32_t threads = 10;
+    // Varigraph configuration
+    VarigraphKernelConfig config;
 
 	// Input parameter
     int c;
@@ -389,26 +285,26 @@ int main_genotype(int argc, char** argv) {
     {
         static const struct option long_options[] = 
 		{
-            {"load-graph", required_argument, 0, 1},
-            {"sample", required_argument, 0, 's'},
+            {"load-graph", required_argument, 0, 1},       // inputGraphFileName
+            {"sample", required_argument, 0, 's'},         // samplesConfigFileName
 
-            {"genotype", required_argument, 0, 'g'},
+            {"genotype", required_argument, 0, 'g'},       // sampleType
 
-            {"sample-ploidy", required_argument, 0, 2},
+            {"sample-ploidy", required_argument, 0, 2},    // samplePloidy
 
-            {"number", required_argument, 0, 'n'},
-            {"granularity", required_argument, 0, 3},
-            {"mode", required_argument, 0, 'm'},
-            {"sv", no_argument, 0, 4},
-            {"min-support", required_argument, 0, 5},
-            {"use-depth", no_argument, 0, 6},
+            {"number", required_argument, 0, 'n'},         // haploidNum
+            {"granularity", required_argument, 0, 3},      // chrLenThread
+            {"mode", required_argument, 0, 'm'},           // transitionProType
+            {"sv", no_argument, 0, 4},                     // svGenotypeBool
+            {"min-support", required_argument, 0, 5},      // minSupportingGQ
+            {"use-depth", no_argument, 0, 6},              // useDepth
 
-            {"gpu", required_argument, 0, 7},
-            {"buffer", required_argument, 0, 8},
+            {"gpu", required_argument, 0, 7},              // gpu
+            {"buffer", required_argument, 0, 8},           // buffer
             
-            {"debug", no_argument, 0, 'D'},
-            {"threads", required_argument, 0, 't'},
-            {"help", no_argument, 0, 'h'},
+            {"debug", no_argument, 0, 'D'},                // debug
+            {"threads", required_argument, 0, 't'},        // threads
+            {"help", no_argument, 0, 'h'},                 // help
             {0, 0, 0, 0}
         };
 
@@ -422,51 +318,51 @@ int main_genotype(int argc, char** argv) {
         switch (c)
         {
         case 1:
-            inputGraphFileName = optarg;
+            config.inputGraphFileName = optarg;
             break;
         case 's':
-            samplesConfigFileName = optarg;
+            config.samplesConfigFileName = optarg;
             break;
 
         case 'g':
-            sampleType = optarg;
+            config.sampleType = optarg;
             break;
 
         case 2:
-            samplePloidy = max(stoi(optarg), 2);
+            config.samplePloidy = max(stoi(optarg), 2);
             break;
 
         case 'n':
-            haploidNum = stoull(optarg);
+            config.haploidNum = stoull(optarg);
             break;
         case 3:
-            chrLenThread = stof(optarg) * 1e6;
+            config.chrLenThread = stof(optarg) * 1e6;
             break;
         case 'm':
-            transitionProType = optarg;
+            config.transitionProType = optarg;
             break;
         case 4:
-            svGenotypeBool = true;
+            config.svGenotypeBool = true;
             break;
         case 5:
-            minSupportingReads = stof(optarg);
+            config.minSupportingGQ = stof(optarg);
             break;
         case 6:
-            useDepth = true;
+            config.useDepth = true;
             break;
 
         case 7:
-            gpu = stoi(optarg);
+            config.gpu = stoi(optarg);
             break;
         case 8:
-            buffer = stoi(optarg);
+            config.buffer = stoi(optarg);
             break;
 
         case 'D':
-            debug = true;
+            config.debug = true;
             break;
         case 't':
-            threads = max(stoi(optarg), 1);
+            config.threads = max(stoi(optarg), 1);
             break;
 
         case 'h':
@@ -485,124 +381,77 @@ int main_genotype(int argc, char** argv) {
     }
 
     // Validate the parameters
-    if (inputGraphFileName.empty()) {
+    if (config.inputGraphFileName.empty()) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --load-graph. The genome graph file cannot be empty.\n\n";
         help_genotype(argv);
         return 1;
     }
 
-    if (samplesConfigFileName.empty()) {
+    if (config.samplesConfigFileName.empty()) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -s. The sample configuration file cannot be empty.\n\n";
         help_genotype(argv);
         return 1;
     }
 
-    if (sampleType != "hom" && sampleType != "het") {
+    if (config.sampleType != "hom" && config.sampleType != "het") {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -g. The provided value must be either 'hom' or 'het'.\n\n";
         help_genotype(argv);
         return 1;
     }
 
-    if (samplePloidy == 0 || samplePloidy > 8) {
+    if (config.samplePloidy == 0 || config.samplePloidy > 8) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --sample-ploidy. The provided value must be between 2 and 8 (inclusive).\n\n";
         help_genotype(argv);
         return 1;
     }
 
-    if (haploidNum == 0) {
+    if (config.haploidNum == 0) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -n. The provided value must be greater than 0.\n\n";
         help_genotype(argv);
         return 1;
-    } else if (haploidNum < 10) {
+    } else if (config.haploidNum < 10) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: -n. The number of haploids for genotyping is relatively low, which may affect the accuracy of genotyping.\n\n";
     }
 
-    if (chrLenThread < 1) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --granularity. The chromosome granularity must be greater than 1 (" << chrLenThread << ").\n\n";
+    if (config.chrLenThread < 1) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --granularity. The chromosome granularity must be greater than 1 (" << config.chrLenThread << ").\n\n";
         help_genotype(argv);
         return 1;
-    } else if (chrLenThread < 1000) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: --granularity. The chromosome granularity is less than 1000 (" << chrLenThread << ").\n\n";
+    } else if (config.chrLenThread < 1000) {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: --granularity. The chromosome granularity is less than 1000 bp (" << config.chrLenThread << " bp).\n\n";
     }
 
-    if (transitionProType != "fre" && transitionProType != "rec") {
+    if (config.transitionProType != "fre" && config.transitionProType != "rec") {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -m. The transition probability type must be either 'fre' or 'rec'.\n\n";
         help_genotype(argv);
         return 1;
     }
 
-    if (buffer <= 0) {
+    if (config.buffer <= 0) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: --buffer. The provided value must be greater than 0.\n\n";
         help_construct(argv);
         return 1;
-    } else if (buffer > 1000) {
+    } else if (config.buffer > 1000) {
         cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter warning: --buffer. The buffer size is relatively large, which may consume a large amount of GPU memory.\n\n";
     }
 
     // Print log
     cerr << "[" << __func__ << "::" << getTime() << "] " << "You are now running varigraph (v" << PROGRAM_VERSION << ").\n\n\n";
     cerr << "[" << __func__ << "::" << getTime() << "] " << "Execution started ..." << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of threads: " << threads << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Genome graph file: " << inputGraphFileName << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample configuration file: " << samplesConfigFileName << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample genome status: " << sampleType << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample ploidy: " << samplePloidy << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of haploids for genotyping: " << haploidNum << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Chromosome granularity: " << chrLenThread << " bp" << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Transition probability type: " << transitionProType << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Structural variation genotyping only: " << (svGenotypeBool ? "Enabled" : "Disabled") << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Minimum site support: " << minSupportingReads << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Use sequencing depth as the depth for homozygous k-mers: " << (useDepth ? "Enabled" : "Disabled") << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Selected GPU ID: " << gpu << endl;
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "GPU buffer size: " << buffer << " MB" << endl;
-
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl;
+    config.logGenotypeConfigKernel();  // print configuration log
 
     // select the GPU device
-    cudaSetDevice(gpu);
+    cudaSetDevice(config.gpu);
     // get the GPU device properties
     cudaDeviceProp deviceProp;
-    cudaGetDeviceProperties(&deviceProp, gpu);
+    cudaGetDeviceProperties(&deviceProp, config.gpu);
     cerr << endl;
     cerr << "           - " << "Selected GPU: " << deviceProp.name << endl;
     cerr << "           - " << "Compute capability: " << deviceProp.major << "." << deviceProp.minor << endl;
     cerr << "           - " << "GPU memory: " << deviceProp.totalGlobalMem / 1024 / 1024 / 1024 << " GB" << endl << endl << endl;
 
     // construct, index and genotype
-    string refFileName = "";
-    string vcfFileName = "";
-    string outputGraphFileName = "";
-    bool fastMode = false;
-    uint32_t kmerLen = 27;
-    uint32_t vcfPloidy = 2;
-    bool useUniqueKmers = false;
-
-    VarigraphKernel VarigraphKernelClass(
-        refFileName, 
-        vcfFileName, 
-        samplesConfigFileName, 
-        inputGraphFileName, 
-        outputGraphFileName, 
-        fastMode, 
-        kmerLen, 
-        sampleType, 
-        samplePloidy, 
-        vcfPloidy, 
-        haploidNum, 
-        chrLenThread, 
-        transitionProType, 
-        svGenotypeBool, 
-        debug, 
-        threads, 
-        minSupportingReads, 
-        useUniqueKmers, 
-        useDepth, 
-        buffer
-    );
+    VarigraphKernel VarigraphKernelClass(config);
 
     // parse the sample configuration file
     VarigraphKernelClass.parse_sample_config();
@@ -646,9 +495,9 @@ void help_genotype(char** argv) {
          << "genotyping arguments:" << endl
          << "    -n, --number       INT      the haploid number for genotyping [15]" << endl
          << "    --granularity      FLOAT    control the chromosome length processed by each thread (unit: Mb) [1]" << endl
-         << "    -m, --mode         STRING   using haplotype frequency (fre) or recombination rate (rec) as transition probability [fre]" << endl
+         << "    -m, --mode         STRING   using haplotype frequency (fre) or recombination rate (rec) as transition probability [rec]" << endl
          << "    --sv                        structural variation genotyping only" << endl
-         << "    --min-support      FLOAT    minimum site support (N) for genotype [0]" << endl
+         << "    --min-support      FLOAT    minimum site quality (GQ) value for genotype [0]" << endl
          << "    --use-depth                 use sequencing depth as the depth for homozygous k-mers" << endl
          << endl
          << "GPU arguments:" << endl

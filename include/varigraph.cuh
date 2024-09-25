@@ -9,38 +9,75 @@
 using namespace std;
 
 
+/**
+ * @author zezhen du
+ * @date 2024/09/24
+ * @brief Parameter configuration structure
+ * 
+ * @return void
+**/
+class VarigraphKernelConfig : public VarigraphConfig {
+public:
+    int gpu;      // GPU ID
+    int buffer;   // Buffer size
+
+    // Default constructor, setting default values
+    VarigraphKernelConfig() 
+        : VarigraphConfig(),
+          gpu(0), 
+          buffer(100) {}
+
+    // Construct log output
+    void logConstructionConfigKernel() const {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of threads: " << threads << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "k-mer size: " << kmerLen << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Reference file path: " << refFileName << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Variants file path: " << vcfFileName << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Ploidy of genotypes in the VCF file: " << vcfPloidy << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Selected GPU ID: " << gpu << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "GPU buffer size: " << buffer << " MB" << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Fast mode: " << (fastMode ? "Enabled" : "Disabled") << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Use only unique k-mers for indexing: " << (useUniqueKmers ? "Enabled" : "Disabled") << endl;
+    }
+
+    // Genotype log output
+    void logGenotypeConfigKernel() const {
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of threads: " << threads << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Genome graph file: " << inputGraphFileName << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample configuration file: " << samplesConfigFileName << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample genome status: " << sampleType << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample ploidy: " << samplePloidy << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Number of haploids for genotyping: " << haploidNum << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Chromosome granularity: " << chrLenThread << " bp" << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Transition probability type: " << transitionProType << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Structural variation genotyping only: " << (svGenotypeBool ? "Enabled" : "Disabled") << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Minimum site quality (GQ): " << minSupportingGQ << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Use sequencing depth as the depth for homozygous k-mers: " << (useDepth ? "Enabled" : "Disabled") << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Selected GPU ID: " << gpu << endl;
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "GPU buffer size: " << buffer << " MB" << endl;
+
+        cerr << "[" << __func__ << "::" << getTime() << "] " << "Debug mode: " << (debug ? "Enabled" : "Disabled") << endl;
+    }
+};
+
+
 class VarigraphKernel : public Varigraph {
 public:
     ConstructIndexKernel* ConstructIndexKernelClassPtr_ = nullptr;  // Record the index of graph and reference genome
-
     int buffer_ = 100;  // Buffer size
 
     // Constructor
-    VarigraphKernel(
-        const string& refFileName, 
-        const string& vcfFileName, 
-        const string& samplesConfigFileName, 
-        const string& inputGraphFileName, 
-        const string& outputGraphFileName, 
-        const bool& fastMode, 
-        uint32_t& kmerLen, 
-        const string& sampleType, 
-        const uint32_t& samplePloidy, 
-        uint32_t& vcfPloidy, 
-        const uint32_t& haploidNum, 
-        const uint32_t& chrLenThread, 
-        const string& transitionProType, 
-        const bool& svGenotypeBool, 
-        const bool& debug, 
-        const uint32_t& threads, 
-        const float& minSupportingReads, 
-        const bool& useUniqueKmers, 
-        const bool& useDepth, 
-        const int buffer
-    ) : Varigraph(refFileName, vcfFileName, samplesConfigFileName, inputGraphFileName, outputGraphFileName, fastMode, 
-                  kmerLen, sampleType, samplePloidy, vcfPloidy, haploidNum, chrLenThread, transitionProType, svGenotypeBool, debug, threads, 
-                  minSupportingReads, useUniqueKmers, useDepth) {
-        buffer_ = buffer;
+    VarigraphKernel(const VarigraphKernelConfig& config)
+        : Varigraph(config) {
+        buffer_ = config.buffer;
     }
 
     // Destructor
