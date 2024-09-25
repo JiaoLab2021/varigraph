@@ -684,7 +684,7 @@ void ConstructIndex::index() {
         taskProcessNum++;
 
         // Print log every 5% of tasks
-        if (taskProcessNum > 0 && taskProcessNum % (taskNum / 20) == 0) {
+        if (taskProcessNum > 0 && taskNum >= 20 && taskProcessNum % (taskNum / 20) == 0) {
             cerr << "[" << __func__ << "::" << getTime() << "] " << std::fixed << std::setprecision(0) << "Indexing progress: " << std::setw(3) << static_cast<double>(taskProcessNum) / taskNum * 100.0 << "%\n";
         }
     }
