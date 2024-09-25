@@ -84,7 +84,7 @@ varigraph construct -r refgenome.fa -v input.vcf.gz --save-graph graph.bin
 **2. Performing Genotyping:**
 
 ```shell
-varigraph genotype --load-graph graph.bin -s samples.cfg -m rec --use-depth
+varigraph genotype --load-graph graph.bin -s samples.cfg --use-depth
 ```
 
 * Adjustments for Genotyping:
