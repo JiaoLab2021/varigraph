@@ -4,7 +4,7 @@
 [![Build Status](https://github.com/JiaoLab2021/varigraph/actions/workflows/ci.yaml/badge.svg)](https://github.com/JiaoLab2021/varigraph/actions)
 
 ## Introduction
-A fast and resource-efficient genome graph genotyping tool
+An accurate and widely applicable pangenome graph-based variant genotyper for diploid and polyploid genomes
 
 ## Requirements
 
