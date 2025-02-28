@@ -29,6 +29,12 @@ jobs:
         sudo apt-get install -y cmake
         cmake --version
 
+    - name: Install libtinfo5 manually
+      run: |
+        wget http://archive.ubuntu.com/ubuntu/pool/main/n/ncurses/libtinfo5_6.2+20200213-1ubuntu1_amd64.deb
+        sudo dpkg -i libtinfo5_6.2+20200213-1ubuntu1_amd64.deb
+        sudo apt-get -f install  # Fix any broken dependencies
+
     - name: Install CUDA Toolkit
       run: |
         # Create a temporary directory in the user's home directory
