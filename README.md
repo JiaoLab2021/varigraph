@@ -103,7 +103,7 @@ varigraph genotype --load-graph graph.bin -s samples.cfg --use-depth
   
 * Allo-polyploids (such as Brassica napus (AACC) or hexaploid wheat (AABBDD)): For these species, simply set --sample-ploidy to 2.
 
-* For accurate genotyping, make sure to choose the correct ploidy setting based on whether your species is a **homoeologous polyploid** (same genome type) or **allo-polyploid**.
+* For accurate genotyping, make sure to choose the correct ploidy setting based on whether your species is a **homoeologous polyploid** or **allo-polyploid**.
 
 ## Note on GPU Acceleration
 
