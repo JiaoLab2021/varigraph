@@ -42,7 +42,17 @@ jobs:
       run: |
         export DEBIAN_FRONTEND=noninteractive
         apt-get update
-        apt-get install -y libz-dev libtinfo6 cmake
+        apt-get install -y libz-dev libtinfo6
+
+    - name: Install CMake 3.24+
+      run: |
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get update
+        apt-get install -y wget
+        wget https://github.com/Kitware/CMake/releases/download/v3.26.4/cmake-3.26.4-linux-x86_64.sh
+        chmod +x cmake-3.26.4-linux-x86_64.sh
+        ./cmake-3.26.4-linux-x86_64.sh --skip-license --prefix=/usr/local
+        cmake --version
 
     - name: Configure and build project
       run: |
