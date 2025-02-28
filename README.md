@@ -4,7 +4,7 @@
 [![Build Status](https://github.com/JiaoLab2021/varigraph/actions/workflows/ci.yaml/badge.svg)](https://github.com/JiaoLab2021/varigraph/actions)
 
 ## Introduction
-A fast and resource-efficient genome graph genotyping tool
+An accurate and widely applicable pangenome graph-based variant genotyper for diploid and polyploid genomes
 
 ## Requirements
 
@@ -89,8 +89,21 @@ varigraph genotype --load-graph graph.bin -s samples.cfg --use-depth
 
 * Adjustments for Genotyping:
    * Homozygous Samples: For homozygous samples, add `-g hom` to improve genotyping accuracy.
-   * Tetraploid Samples: If your samples are tetraploid, adjust the `--sample-ploidy 4` parameter.
    * Use `--use-depth` for accurate genotyping regardless of ploidy.
+
+## Note on Genotyping
+
+* The software supports species with ploidy ranging from 2 to 8. Please set the `--sample-ploidy` parameter to the corresponding value for the species:
+
+   * Solanum tuberosum: Set `--sample-ploidy 4` (for tetraploid species like Solanum tuberosum)
+   * Saccharum officinarum: Set `--sample-ploidy 8` (common ploidy for Saccharum officinarum)
+   * Fragaria × ananassa: Set `--sample-ploidy 6` (common ploidy for cultivated Fragaria × ananassa)
+
+* Homoeologous polyploids (such as tetraploid potato): For these species, simply set --sample-ploidy to the corresponding ploidy level (e.g., 4 for tetraploid potato).
+  
+* Allo-polyploids (such as Brassica napus (AACC) or hexaploid wheat (AABBDD)): For these species, simply set --sample-ploidy to 2.
+
+* For accurate genotyping, make sure to choose the correct ploidy setting based on whether your species is a **homoeologous polyploid** (same genome type) or **allo-polyploid**.
 
 ## Note on GPU Acceleration
 
