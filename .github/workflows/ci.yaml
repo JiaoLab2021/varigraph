@@ -21,7 +21,7 @@ jobs:
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libz-dev libtinfo5
+        sudo apt-get install -y libz-dev libtinfo6
         # Additional steps for installing CUDA Toolkit if needed
 
     - name: Set up CMake
@@ -47,6 +47,8 @@ jobs:
         sudo mv cuda-ubuntu2004.pin /etc/apt/preferences.d/cuda-repository-pin-600
         wget https://developer.download.nvidia.com/compute/cuda/12.4.1/local_installers/cuda-repo-ubuntu2004-12-4-local_12.4.1-550.54.15-1_amd64.deb
         sudo dpkg -i cuda-repo-ubuntu2004-12-4-local_12.4.1-550.54.15-1_amd64.deb
+        
+        # Ensure the CUDA repository GPG key is correctly placed
         sudo cp /var/cuda-repo-ubuntu2004-12-4-local/cuda-*-keyring.gpg /usr/share/keyrings/
         sudo apt-get update
         sudo apt-get -y install cuda-toolkit-12-4
