@@ -16,8 +16,17 @@ jobs:
       image: nvidia/cuda:12.4.1-devel-ubuntu20.04
 
     steps:
+    - name: Set timezone to avoid interactive prompt
+      run: |
+        export DEBIAN_FRONTEND=noninteractive
+        ln -fs /usr/share/zoneinfo/UTC /etc/localtime
+        apt-get update
+        apt-get install -y tzdata
+        dpkg-reconfigure --frontend noninteractive tzdata
+
     - name: Install Git 2.18+
       run: |
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y software-properties-common
         add-apt-repository ppa:git-core/ppa -y
@@ -31,6 +40,7 @@ jobs:
 
     - name: Install additional dependencies
       run: |
+        export DEBIAN_FRONTEND=noninteractive
         apt-get update
         apt-get install -y libz-dev libtinfo6 cmake
 
