@@ -95,15 +95,13 @@ varigraph genotype --load-graph graph.bin -s samples.cfg --use-depth
 
 * The software supports species with ploidy ranging from 2 to 8. Please set the `--sample-ploidy` parameter to the corresponding value for the species:
 
-   * Solanum tuberosum: Set `--sample-ploidy 4` (for tetraploid species like Solanum tuberosum)
-   * Saccharum officinarum: Set `--sample-ploidy 8` (common ploidy for Saccharum officinarum)
-   * Fragaria × ananassa: Set `--sample-ploidy 6` (common ploidy for cultivated Fragaria × ananassa)
+   * Autotetraploid: Set `--sample-ploidy 4` (such as Solanum tuberosum, Medicago sativa, and Vaccinium corymbosum)
 
-* Homoeologous polyploids (such as tetraploid potato): For these species, simply set --sample-ploidy to the corresponding ploidy level (e.g., 4 for tetraploid potato).
+* Autopolyploids (such as tetraploid potato): For these species, simply set --sample-ploidy to the corresponding ploidy level (e.g., 4 for tetraploid potato).
   
-* Allo-polyploids (such as Brassica napus (AACC) or hexaploid wheat (AABBDD)): For these species, simply set --sample-ploidy to 2.
+* Allopolyploids (such as Brassica napus (AACC) or hexaploid wheat (AABBDD)): For these species, simply set --sample-ploidy to 2.
 
-* For accurate genotyping, make sure to choose the correct ploidy setting based on whether your species is a **homoeologous polyploid** or **allo-polyploid**.
+* For accurate genotyping, make sure to choose the correct ploidy setting based on whether your species is a **autopolyploid** or **allopolyploid**.
 
 ## Note on GPU Acceleration
 
