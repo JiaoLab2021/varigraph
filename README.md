@@ -110,3 +110,13 @@ varigraph genotype --load-graph graph.bin -s samples.cfg --use-depth
 * Usage:
    * Use `--gpu` to specify GPU usage. For example, `--gpu 0` uses GPU 0.
    * Adjust GPU memory usage with `--buffer` parameter. Smaller values consume less GPU memory.
+
+## Citation
+
+[varigraph_article]: https://www.cell.com/molecular-plant/fulltext/S1674-2052(25)00267-9
+
+*  Du, ZZ., He, JB., et al. [Varigraph: An accurate and widely applicable pangenome graph-based variant genotyper for diploid and polyploid genomes.][varigraph_article] Molecular Plant (2025)
+
+## License
+
+MIT
