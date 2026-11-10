@@ -37,6 +37,10 @@ using namespace std;
 
 // global variable
 extern bool debugGenotype;
+// --poly-mix: polyploid hidden states are multisets of the selected haplotypes (not whole VCF samples)
+extern bool polyMixGenotype;
+extern double polyMixSwitchRate;
+extern double polyMixMismatch;
 
 
 struct HS {

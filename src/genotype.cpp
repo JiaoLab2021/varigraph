@@ -3,10 +3,135 @@
 #include "../include/genotype.hpp"
 #include "../include/construct_index.hpp"
 
+#include <map>
+#include <cmath>
+#include <algorithm>
+
 using namespace std;
 
 // global variable
 bool debugGenotype = false;
+bool polyMixGenotype = false;
+double polyMixSwitchRate = 1e-4;   // --switch-rate: per-copy switch rate per bp (poly-mix)
+double polyMixMismatch = 0.05;     // --mismatch: per-copy allele mismatch vs. copied haplotype (poly-mix)
+
+namespace {
+// All size-k multisets (combinations with replacement) of the sorted haplotype list, each sorted ascending.
+void multiset_rec(const vector<uint16_t>& haps, uint32_t k, size_t start, vector<uint16_t>& cur, vector<vector<uint16_t> >& out) {
+    if (cur.size() == k) { out.push_back(cur); return; }
+    for (size_t i = start; i < haps.size(); ++i) {
+        cur.push_back(haps[i]);
+        multiset_rec(haps, k, i, cur, out);
+        cur.pop_back();
+    }
+}
+
+vector<vector<uint16_t> > multiset_states(vector<uint16_t> haps, uint32_t k, bool homOnly) {
+    std::sort(haps.begin(), haps.end());
+    haps.erase(std::unique(haps.begin(), haps.end()), haps.end());
+    vector<vector<uint16_t> > out;
+    if (homOnly) {
+        for (auto h : haps) out.push_back(vector<uint16_t>(k, h));
+        return out;
+    }
+    vector<uint16_t> cur;
+    multiset_rec(haps, k, 0, cur, out);
+    return out;
+}
+
+// One-switch neighbourhood: for each state, the indices of its distinct (k-1)-sub-multisets.
+// alpha'(s) = E(s) [noR^k a(s) + noR^(k-1) R sum_{x distinct in s} (A(s-x) - a(s))],  A(m) = sum over t containing m of a(t).
+// This is exact for transitions that keep k-1 copies; terms with >=2 switches (R^2) are dropped.
+struct MixNeighbour {
+    vector<vector<uint16_t> > states;          // cached state list (signature)
+    vector<vector<int32_t> > subIdx;           // per state: sub-multiset indices
+    size_t nSub = 0;
+};
+
+const MixNeighbour& mix_neighbour(const vector<const vector<uint16_t>*>& stateVecs) {
+    thread_local MixNeighbour cache;
+    bool same = cache.states.size() == stateVecs.size();
+    for (size_t i = 0; same && i < stateVecs.size(); ++i) same = (cache.states[i] == *stateVecs[i]);
+    if (same) return cache;
+    cache.states.clear(); cache.subIdx.clear();
+    std::map<vector<uint16_t>, int32_t> subMap;
+    for (const auto* sv : stateVecs) {
+        cache.states.push_back(*sv);
+        vector<int32_t> idx;
+        for (size_t j = 0; j < sv->size(); ++j) {
+            if (j > 0 && (*sv)[j] == (*sv)[j - 1]) continue;   // distinct elements only
+            vector<uint16_t> sub(*sv); sub.erase(sub.begin() + j);
+            auto it = subMap.emplace(sub, (int32_t)subMap.size()).first;
+            idx.push_back(it->second);
+        }
+        cache.subIdx.push_back(std::move(idx));
+    }
+    cache.nSub = subMap.size();
+    return cache;
+}
+
+// Shared forward/backward step. prevScore(i) is alpha (forward) or beta (backward) of the neighbouring node,
+// in the same state order. Returns false if state lists differ (caller falls back to the original O(S^2) loop).
+bool mix_step(
+    const vector<HMMScore>& pre, bool useA,
+    long double recombProb, long double noRecombProb,
+    const vector<HHS>& HHSStrVec, vector<long double>& outVec
+) {
+    vector<const vector<uint16_t>*> cur; vector<long double> emis;
+    for (const auto& h : HHSStrVec) {
+        if (h.hapVec.empty() || h.HiddenStatesVec.empty()) continue;
+        cur.push_back(&h.hapVec); emis.push_back(h.observableScore);
+    }
+    if (cur.size() != pre.size() || cur.empty()) return false;
+    if (pre.front().hapVec != *cur.front() || pre.back().hapVec != *cur.back()) return false;
+    const MixNeighbour& nb = mix_neighbour(cur);
+    const int k = (int)cur.front()->size();
+    vector<long double> A(nb.nSub, 0.0L);
+    for (size_t i = 0; i < cur.size(); ++i) {
+        long double p = useA ? pre[i].a : pre[i].b;
+        for (int32_t m : nb.subIdx[i]) A[m] += p;
+    }
+    const long double stay = std::pow(noRecombProb, k);
+    const long double one = std::pow(noRecombProb, k - 1) * recombProb;
+    outVec.assign(cur.size(), 0.0L);
+    long double sum = 0.0L;
+    for (size_t i = 0; i < cur.size(); ++i) {
+        long double p = useA ? pre[i].a : pre[i].b;
+        long double sw = 0.0L;
+        for (int32_t m : nb.subIdx[i]) sw += A[m] - p;
+        outVec[i] = emis[i] * (stay * p + one * sw);
+        sum += outVec[i];
+    }
+    if (sum > 0.0L) { for (auto& v : outVec) v /= sum; }
+    else { for (auto& v : outVec) v = 1.0L / (long double)outVec.size(); }
+    return true;
+}
+
+// Biallelic node under --poly-mix: dosage likelihoods L[d] (d alt copies), P(d | a alt copies in state, theta),
+// and the state emission M[a] = sum_d P(d|a) L[d]. Filled in observable_states, used again in posterior
+// (forward, backward and posterior of one block run on the same thread).
+struct MixNode {
+    int P = 0;
+    vector<long double> L, M;
+    vector<vector<long double> > PdA;
+};
+thread_local std::unordered_map<const nodeSrt*, MixNode> mixNodeCache;
+
+vector<vector<long double> > dosage_given_alt_copies(int P, double theta) {
+    vector<vector<long double> > out(P + 1, vector<long double>(P + 1, 0.0L));
+    for (int a = 0; a <= P; ++a) {
+        vector<long double> dist(1, 1.0L);
+        for (int j = 0; j < P; ++j) {
+            long double p = (j < a) ? (1.0L - theta) : theta;   // copy carries alt
+            vector<long double> nd(dist.size() + 1, 0.0L);
+            for (size_t d = 0; d < dist.size(); ++d) { nd[d] += dist[d] * (1.0L - p); nd[d + 1] += dist[d] * p; }
+            dist.swap(nd);
+        }
+        out[a] = dist;
+    }
+    return out;
+}
+}  // namespace
 
 std::mutex mtxG;
 
@@ -321,6 +446,10 @@ int GENOTYPE::for_bac_post_run(
                 nodeDistence, 
                 hapMap
             );
+            if (polyMixGenotype) {  // per-copy switch: stay exp(-rate*d), switch to each candidate haplotype (1-stay)/H
+                noRecombProb = std::exp(-(long double)polyMixSwitchRate * (long double)nodeDistence);
+                recombProb = (1.0L - noRecombProb) / (long double)std::max<size_t>(1, topHapVec.size());
+            }
         }
 
         // observation matrix
@@ -431,6 +560,10 @@ int GENOTYPE::for_bac_post_run(
                 nodeDistence, 
                 hapMap
             );
+            if (polyMixGenotype) {  // per-copy switch: stay exp(-rate*d), switch to each candidate haplotype (1-stay)/H
+                noRecombProb = std::exp(-(long double)polyMixSwitchRate * (long double)nodeDistence);
+                recombProb = (1.0L - noRecombProb) / (long double)std::max<size_t>(1, topHapVec.size());
+            }
         }
         
         // observation matrix
@@ -842,6 +975,11 @@ vector<vector<uint16_t> > GENOTYPE::increment_vector(
     vector<vector<uint16_t> > ComHapVec;
 
     /* ----------------------------------------------------------- Polyploidy ----------------------------------------------------------- */
+    // --poly-mix: any multiset of the selected haplotypes (the original branch below only allows the
+    // ploidy haplotypes of one VCF sample together, so a new sample can only copy a panel individual).
+    if (samplePloidy > 2 && polyMixGenotype) {
+        return multiset_states(hapVec, samplePloidy, sampleType == "hom");
+    }
     // Polyploidy, sample haplotype combination
     if (samplePloidy > 2) {
         // sample haplotype
@@ -987,6 +1125,94 @@ void GENOTYPE::observable_states(
     GENOTYPE::calculate_poisson_interval(aveKmerCoverage, lower, upper);
 
     /* ============================================ Calculate the observation matrix ============================================ */
+    // --poly-mix, biallelic node: emission marginalises the true dosage d given the state's alt-copy count a,
+    // allowing each copy to differ from the copied haplotype with probability polyMixMismatch.
+    if (polyMixGenotype && !debugGenotype) {
+        const auto& gtv = node.hapGtVec;
+        bool biallelic = true;
+        for (auto g : gtv) if (g > 1) { biallelic = false; break; }
+        const HHS* any = nullptr;
+        for (const auto& s : HHSStrVec) if (!s.hapVec.empty() && !s.HiddenStatesVec.empty()) { any = &s; break; }
+        if (biallelic && any != nullptr && any->hapVec.size() > 2) {
+            const int P = (int)any->hapVec.size();
+            const size_t nK = any->HiddenStatesVec.size();
+            vector<double> mAlt(nK, 0.0), mRef(nK, 0.0); int nAlt = 0, nRef = 0;
+            for (const auto& s : HHSStrVec) {
+                if (s.hapVec.empty() || s.HiddenStatesVec.size() != nK) continue;
+                bool hom = std::all_of(s.hapVec.begin(), s.hapVec.end(), [&](uint16_t x) { return x == s.hapVec[0]; });
+                if (!hom || s.hapVec[0] >= gtv.size()) continue;
+                bool alt = gtv[s.hapVec[0]] == 1;
+                auto& m = alt ? mAlt : mRef; (alt ? nAlt : nRef)++;
+                for (size_t k = 0; k < nK; ++k) m[k] += s.HiddenStatesVec[k].h / (double)P;
+            }
+            if (nAlt > 0 && nRef > 0) {
+                for (size_t k = 0; k < nK; ++k) { mAlt[k] /= nAlt; mRef[k] /= nRef; }
+                MixNode mn; mn.P = P;
+                // Allele-specific k-mers (present in all alt haplotypes and no ref haplotype, or vice versa, and
+                // unique in the graph): their mean coverage acts as allele read depth. Binomial in the alt fraction
+                // d/P is scale-free, so it does not depend on the global k-mer coverage estimate, and zero alt
+                // k-mers is evidence for low dosage (the geometric h=0 term barely differs from h=1 at low depth).
+                double altSum = 0, refSum = 0; int altN = 0, refN = 0;
+                for (size_t k = 0; k < nK; ++k) {
+                    const auto& hs = any->HiddenStatesVec[k];
+                    if (hs.f > 1) continue;
+                    if (mAlt[k] > 0.999 && mRef[k] < 0.001) { altSum += hs.c; ++altN; }
+                    else if (mRef[k] > 0.999 && mAlt[k] < 0.001) { refSum += hs.c; ++refN; }
+                }
+                vector<long double> logL(P + 1, 0.0L);
+                if (altN > 0 && refN > 0) {
+                    const long double ea = altSum / altN, er = refSum / refN, err = 0.01L;
+                    for (int d = 0; d <= P; ++d) {
+                        long double fr = (long double)d / P; fr = fr * (1.0L - err) + (1.0L - fr) * err;
+                        logL[d] = ea * std::log(fr) + er * std::log(1.0L - fr);
+                    }
+                }
+                long double mx = *std::max_element(logL.begin(), logL.end());
+                mn.L.resize(P + 1);
+                for (int d = 0; d <= P; ++d) mn.L[d] = std::exp(logL[d] - mx);
+                mn.PdA = dosage_given_alt_copies(P, polyMixMismatch);
+                mn.M.assign(P + 1, 0.0L);
+                for (int a = 0; a <= P; ++a) for (int d = 0; d <= P; ++d) mn.M[a] += mn.PdA[a][d] * mn.L[d];
+                for (auto& s : HHSStrVec) {
+                    int a = 0;
+                    for (auto x : s.hapVec) a += (x < gtv.size() && gtv[x] == 1);
+                    s.observableScore = mn.M[a];
+                }
+                mixNodeCache[&node] = std::move(mn);
+                return;
+            }
+        }
+    }
+    // --poly-mix, other nodes: every state shares the same k-mer list (same order, same c/f); only h differs.
+    // Precompute the per-k-mer score for h = 0..maxH once, then each state is a product of lookups.
+    if (polyMixGenotype && !debugGenotype) {
+        size_t nK = 0; uint8_t maxH = 0;
+        for (const auto& HHSStr : HHSStrVec) {
+            if (HHSStr.HiddenStatesVec.empty()) continue;
+            nK = HHSStr.HiddenStatesVec.size();
+            for (const auto& hs : HHSStr.HiddenStatesVec) maxH = std::max(maxH, hs.h);
+        }
+        const HHS* ref = nullptr;
+        for (const auto& HHSStr : HHSStrVec) if (HHSStr.HiddenStatesVec.size() == nK && nK > 0) { ref = &HHSStr; break; }
+        if (ref != nullptr) {
+            const size_t W = (size_t)maxH + 1;
+            vector<long double> tab(nK * W);
+            for (size_t k = 0; k < nK; ++k) {
+                for (uint8_t h = 0; h <= maxH; ++h) {
+                    uint8_t c = ref->HiddenStatesVec[k].c, f = ref->HiddenStatesVec[k].f;
+                    find_most_likely_depth(h, c, f, aveKmerCoverage, lower, upper);
+                    tab[k * W + h] = (h == 0) ? geometric(get_error_param(aveKmerCoverage), c) : poisson(aveKmerCoverage * h, c);
+                }
+            }
+            for (auto& HHSStr : HHSStrVec) {
+                auto& result = HHSStr.observableScore;
+                result = 1.0L;
+                const auto& hsv = HHSStr.HiddenStatesVec;
+                for (size_t k = 0; k < hsv.size() && k < nK; ++k) result *= tab[k * W + hsv[k].h];
+            }
+            return;
+        }
+    }
     for (auto& HHSStr : HHSStrVec) {
         auto& result = HHSStr.observableScore;  // save result
         result = 1.0L;  // The initial score is 1
@@ -1184,6 +1410,18 @@ void GENOTYPE::forward(
     vector<long double> alphaVecTmp;  // Temporary storage
     long double alphaSumTmp = 0.0L;  // Temporary storage
 
+    if (polyMixGenotype && !preHMMScoreVec.empty() && !(recombProb == 0.0L && noRecombProb == 0.0L) &&
+        mix_step(preHMMScoreVec, true, recombProb, noRecombProb, HHSStrVec, alphaVecTmp)) {
+        HMMScoreVec.resize(alphaVecTmp.size());
+        uint32_t i = 0;
+        std::lock_guard<std::mutex> mtx_locker(mtxG);
+        for (const auto& h : HHSStrVec) {
+            if (h.hapVec.empty() || h.HiddenStatesVec.empty()) continue;
+            HMMScoreVec[i].a = alphaVecTmp[i]; HMMScoreVec[i].hapVec = h.hapVec; ++i;
+        }
+        return;
+    }
+
     for (const auto& [hapVec, HiddenStatesVec, observableScore] : HHSStrVec) {
         if (hapVec.empty() || HiddenStatesVec.empty()) {
             continue;
@@ -1284,6 +1522,13 @@ void GENOTYPE::backward(
 {
     vector<long double> betaVecTmp;  // Temporary storage
     long double betaSumTmp = 0.0L;  // Temporary storage
+
+    if (polyMixGenotype && !preHMMScoreVec.empty() && !(recombProb == 0.0L && noRecombProb == 0.0L) &&
+        mix_step(preHMMScoreVec, false, recombProb, noRecombProb, HHSStrVec, betaVecTmp)) {
+        std::lock_guard<std::mutex> mtx_locker(mtxG);
+        for (size_t i = 0; i < betaVecTmp.size() && i < HMMScoreVec.size(); ++i) HMMScoreVec[i].b = betaVecTmp[i];
+        return;
+    }
 
     for (const auto& [hapVec, HiddenStatesVec, observableScore] : HHSStrVec) {
         if (hapVec.empty() || HiddenStatesVec.empty()) {
@@ -1436,6 +1681,107 @@ int GENOTYPE::posterior(
 
     if (debugGenotype) {
         cerr << "denominator: " << denominator << endl;
+    }
+
+    // --poly-mix biallelic node: posterior over the true dosage d.
+    // a*b carries the node emission twice (both alpha and beta include it), so gamma(s) = a*b/M[a_s]
+    // and P(d | s, data) = P(d|a_s) L[d] / M[a_s]  ->  P(d) proportional to sum_s a*b P(d|a_s) L[d] / M[a_s]^2.
+    if (polyMixGenotype && !debugGenotype) {
+        auto mit = mixNodeCache.find(nodePtr);
+        if (mit != mixNodeCache.end() && !(*nodePtr).HMMScoreVec.empty()) {
+            const MixNode& mn = mit->second; const int P = mn.P;
+            vector<long double> pd(P + 1, 0.0L);
+            for (const auto& HMMScoreTmp : (*nodePtr).HMMScoreVec) {
+                int a = 0;
+                for (auto x : HMMScoreTmp.hapVec) a += (x < hapGtVec.size() && hapGtVec[x] == 1);
+                if (a > P || mn.M[a] <= 0.0L) continue;
+                long double w = HMMScoreTmp.a * HMMScoreTmp.b / (mn.M[a] * mn.M[a]);
+                for (int d = 0; d <= P; ++d) pd[d] += w * mn.PdA[a][d] * mn.L[d];
+            }
+            long double tot = 0.0L; for (auto v : pd) tot += v;
+            int best = 0;
+            for (int d = 1; d <= P; ++d) if (pd[d] > pd[best]) best = d;
+            // haplotypes carrying alt / ref here (prefer the selected ones, which have k-mer info)
+            int altHap = -1, refHap = -1;
+            for (auto h : topHapVec) {
+                if (h >= hapGtVec.size()) continue;
+                if (hapGtVec[h] == 1 && altHap < 0) altHap = h;
+                if (hapGtVec[h] == 0 && refHap < 0) refHap = h;
+            }
+            for (size_t h = 0; h < hapGtVec.size() && (altHap < 0 || refHap < 0); ++h) {
+                if (hapGtVec[h] == 1 && altHap < 0) altHap = (int)h;
+                if (hapGtVec[h] == 0 && refHap < 0) refHap = (int)h;
+            }
+            if (tot > 0.0L && altHap >= 0 && refHap >= 0) {
+                auto& posteriorInfo = (*nodePtr).posteriorInfo;
+                std::lock_guard<std::mutex> mtx_locker(mtxG);
+                posteriorInfo.probability = pd[best] / tot;
+                posteriorInfo.hapVec.assign(P - best, (uint16_t)refHap);
+                posteriorInfo.hapVec.insert(posteriorInfo.hapVec.end(), best, (uint16_t)altHap);
+                posteriorInfo.kmerNumVec.clear(); posteriorInfo.kmerAveCovVec.clear();
+                for (const auto& hapIdx : posteriorInfo.hapVec) {
+                    uint64_t kmerNum = get<0>(hapIdxKmerInfoMap[hapIdx]);
+                    float kmerAveCov = (kmerNum != 0) ? static_cast<float>(get<1>(hapIdxKmerInfoMap[hapIdx])) / (float)kmerNum : 0.0;
+                    posteriorInfo.kmerNumVec.push_back(kmerNum);
+                    posteriorInfo.kmerAveCovVec.push_back(kmerAveCov);
+                }
+                posteriorInfo.uniqueKmerNum = uniqueKmerNum;
+                mixNodeCache.erase(mit);
+                vector<HMMScore>().swap((*nodePtr).HMMScoreVec);
+                return 0;
+            }
+        }
+        if (mit != mixNodeCache.end()) mixNodeCache.erase(mit);
+    }
+
+    // --poly-mix fast path: integer genotype keys (sorted allele indices < 256, ploidy <= 8) instead of strings
+    bool smallGt = polyMixGenotype && !debugGenotype;
+    for (const auto& HMMScoreTmp : (*nodePtr).HMMScoreVec) {
+        if (!smallGt) break;
+        if (HMMScoreTmp.hapVec.size() > 8) { smallGt = false; break; }
+        for (const auto& hap : HMMScoreTmp.hapVec) if (hapGtVec[hap] > 255) { smallGt = false; break; }
+    }
+    if (smallGt && denominator > 0.0L) {
+        auto gtKey = [&](const vector<uint16_t>& hv) {
+            uint16_t g[8]; size_t n = hv.size();
+            for (size_t i = 0; i < n; ++i) g[i] = hapGtVec[hv[i]];
+            std::sort(g, g + n);
+            uint64_t key = n;
+            for (size_t i = 0; i < n; ++i) key = (key << 8) | g[i];
+            return key;   // all states at a node share n, so the packed sorted alleles identify the genotype
+        };
+        std::unordered_map<uint64_t, long double> gtSum;
+        vector<uint64_t> keys; keys.reserve((*nodePtr).HMMScoreVec.size());
+        for (const auto& HMMScoreTmp : (*nodePtr).HMMScoreVec) {
+            if (HMMScoreTmp.hapVec.empty()) { keys.push_back(UINT64_MAX); continue; }
+            uint64_t key = gtKey(HMMScoreTmp.hapVec);
+            keys.push_back(key);
+            gtSum[key] += (HMMScoreTmp.a * HMMScoreTmp.b) / denominator;
+        }
+        uint64_t bestKey = 0; long double bestSum = -1.0L;
+        for (const auto& [key, s] : gtSum) if (s > bestSum) { bestSum = s; bestKey = key; }
+        auto& posteriorInfo = (*nodePtr).posteriorInfo;
+        long double maxPosteriorScore = 0.0L; size_t bestIdx = SIZE_MAX;
+        for (size_t i = 0; i < (*nodePtr).HMMScoreVec.size(); ++i) {
+            if (keys[i] != bestKey) continue;
+            long double ps = ((*nodePtr).HMMScoreVec[i].a * (*nodePtr).HMMScoreVec[i].b) / denominator;
+            if (bestIdx == SIZE_MAX || maxPosteriorScore < ps) { maxPosteriorScore = ps; bestIdx = i; }
+        }
+        std::lock_guard<std::mutex> mtx_locker(mtxG);
+        posteriorInfo.probability = bestSum;
+        if (bestIdx != SIZE_MAX) {
+            posteriorInfo.hapVec = (*nodePtr).HMMScoreVec[bestIdx].hapVec;
+            posteriorInfo.kmerNumVec.clear(); posteriorInfo.kmerAveCovVec.clear();
+            for (const auto& hapIdx : posteriorInfo.hapVec) {
+                uint64_t kmerNum = get<0>(hapIdxKmerInfoMap[hapIdx]);
+                float kmerAveCov = (kmerNum != 0) ? static_cast<float>(get<1>(hapIdxKmerInfoMap[hapIdx])) / (float)kmerNum : 0.0;
+                posteriorInfo.kmerNumVec.push_back(kmerNum);
+                posteriorInfo.kmerAveCovVec.push_back(kmerAveCov);
+            }
+            posteriorInfo.uniqueKmerNum = uniqueKmerNum;
+        }
+        vector<HMMScore>().swap((*nodePtr).HMMScoreVec);
+        return 0;
     }
 
     // Record the sum probability of each genotype

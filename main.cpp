@@ -263,6 +263,9 @@ int main_genotype(int argc, char** argv) {
             {"sv", no_argument, 0, 4},                    // svGenotypeBool
             {"min-support", required_argument, 0, 5},     // minSupportingGQ
             {"use-depth", no_argument, 0, 6},             // useDepth
+            {"poly-mix", no_argument, 0, 7},              // polyMixGenotype
+            {"switch-rate", required_argument, 0, 8},     // polyMixSwitchRate
+            {"mismatch", required_argument, 0, 9},        // polyMixMismatch
             /* -------------------------------------------------- optional arguments -------------------------------------------------- */
             {"debug", no_argument, 0, 'D'},               // debug
             {"threads", required_argument, 0, 't'},       // threads
@@ -272,7 +275,7 @@ int main_genotype(int argc, char** argv) {
 
         int option_index = 0;
 
-        c = getopt_long (argc, argv, "1:s:g:2:n:3:m:45:6Dt:h", long_options, &option_index);
+        c = getopt_long (argc, argv, "1:s:g:2:n:3:m:45:678:9:Dt:h", long_options, &option_index);
 
         if (c == -1)
             break;
@@ -311,6 +314,15 @@ int main_genotype(int argc, char** argv) {
             break;
         case 6:
             config.useDepth = true;
+            break;
+        case 7:
+            polyMixGenotype = true;
+            break;
+        case 8:
+            polyMixSwitchRate = stod(optarg);
+            break;
+        case 9:
+            polyMixMismatch = stod(optarg);
             break;
 
         case 'D':
@@ -436,6 +448,9 @@ void help_genotype(char** argv) {
          << "    --sv                        structural variation genotyping only" << endl
          << "    --min-support      FLOAT    minimum site quality (GQ) value for genotype [0]" << endl
          << "    --use-depth                 use sequencing depth as the depth for homozygous k-mers" << endl
+         << "    --poly-mix                  polyploid: hidden states mix any selected haplotypes (multisets) instead of whole VCF samples" << endl
+         << "    --switch-rate      FLOAT    with --poly-mix: per-copy haplotype switch rate per bp [1e-4]" << endl
+         << "    --mismatch         FLOAT    with --poly-mix: per-copy allele mismatch vs. the copied haplotype (biallelic sites) [0.05]" << endl
          << endl
          << "optional arguments:" << endl
          << "    -D, --debug                 enable debug code" << endl
