@@ -6,6 +6,11 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+set(SRC_FILES_CLI
+    src/OptionParser.cpp
+    src/CommandRunner.cpp
+)
+
 # Add source files for CPU version
 set(SRC_FILES_CPU
     src/construct_index.cpp
@@ -32,7 +37,7 @@ set(SRC_FILES_GPU
 )
 
 # Add executable for CPU version
-add_executable(varigraph main.cpp ${SRC_FILES_CPU})
+add_executable(varigraph main.cpp ${SRC_FILES_CLI} ${SRC_FILES_CPU})
 target_compile_options(varigraph PRIVATE -O3)
 
 # Link libraries for CPU version
@@ -44,15 +49,18 @@ target_link_libraries(varigraph ZLIB::ZLIB)
 target_link_libraries(varigraph stdc++fs)
 
 # Check for GPU, CUDA, and NVCC
-cmake_policy(SET CMP0104 NEW)
+if(POLICY CMP0104)
+    cmake_policy(SET CMP0104 NEW)
+endif()
 find_package(CUDA)
 if(CUDA_FOUND)
     message(STATUS "Found CUDA, building GPU version.")
     # Set compiler options for CUDA
     set(CUDA_NVCC_FLAGS -O3 -std=c++17 --extended-lambda)
-    
+
     # Add executable for GPU version
-    cuda_add_executable(varigraph-gpu main.cu ${SRC_FILES_CPU} ${SRC_FILES_GPU})
+    cuda_add_executable(varigraph-gpu main.cpp src/CommandRunner.cu ${SRC_FILES_CLI} ${SRC_FILES_CPU} ${SRC_FILES_GPU})
+    target_compile_definitions(varigraph-gpu PRIVATE VARIGRAPH_GPU)
 
     # Set CUDA_ARCHITECTURES
     set_property(TARGET varigraph-gpu PROPERTY CUDA_ARCHITECTURES "sm_50")

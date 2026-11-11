@@ -1,6 +1,7 @@
 // g++ -c counting_bloom_filter.cpp -std=c++17 -O3 -march=native
 
 #include "../include/counting_bloom_filter.hpp"
+#include "../include/logger.hpp"
 
 // overloaded assignment operator
 BloomFilter& BloomFilter::operator=(const BloomFilter& other) {
@@ -90,7 +91,7 @@ void BloomFilter::_init_seeds(uint32_t _numHashes) {
 uint64_t BloomFilter::_murmur_hash(const void* key, int len, unsigned int seed) {
     // uint64_t hashValue;
     uint64_t hashValue[2];
-    
+
     MurmurHash3_x64_128(key, len, seed, &hashValue);
 
     // return hashValue;
@@ -125,7 +126,7 @@ void BloomFilter::clear() {
 
 void BloomFilter::save(const string& filename) const {
     // log
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom filter saved to file: " << filename << endl;
+    stage_stream() << "Writing Counting Bloom filter: " << filename << endl;
 
     std::ofstream file(filename, std::ios::binary);
     if (file) {
@@ -137,15 +138,15 @@ void BloomFilter::save(const string& filename) const {
         for (const auto& seed : _seeds) {
             file.write(reinterpret_cast<const char*>(&seed), sizeof(uint64_t));
         }
-        
+
         // Save the content of the bloom filter
         for (uint64_t i = 0; i < _size; ++i) {
             file.write(reinterpret_cast<const char*>(&_filter[i]), sizeof(uint8_t));
         }
-        
+
         file.close();
     } else {
-        cerr << "[" << __func__ << "::" << getTime() << "] "
+        error_stream()
             << "'" << filename << "': No such file or directory." << endl;
         exit(1);
     }
@@ -153,14 +154,14 @@ void BloomFilter::save(const string& filename) const {
 
 void BloomFilter::load(const string& filename) {
     // log
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom filter loaded from file: " << filename << endl;
+    stage_stream() << "Reading Counting Bloom filter: " << filename << endl;
 
     std::ifstream file(filename, std::ios::binary);
     if (file) {
         // Load size of bloom filter and number of hash functions
         file.read(reinterpret_cast<char*>(&_size), sizeof(uint64_t));
         file.read(reinterpret_cast<char*>(&_numHashes), sizeof(uint32_t));
-        
+
         // Empty the original Bloom filter
         if (_filter != nullptr) {
             delete[] _filter;
@@ -174,16 +175,16 @@ void BloomFilter::load(const string& filename) {
         for (auto& seed : _seeds) {
             file.read(reinterpret_cast<char*>(&seed), sizeof(uint64_t));
         }
-        
+
         // Load the content of the bloom filter
         for (uint64_t i = 0; i < _size; ++i) {
             file.read(reinterpret_cast<char*>(&_filter[i]), sizeof(uint8_t));
         }
-        
+
         file.close();
     } else {
         // log
-        cerr << "[" << __func__ << "::" << getTime() << "] "
+        error_stream()
             << "'" << filename << "': No such file or directory." << endl;
         exit(1);
     }

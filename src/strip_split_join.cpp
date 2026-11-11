@@ -1,6 +1,8 @@
 // g++ -c strip_split_join.cpp -std=c++17 -O3 -march=native
 
 #include "../include/strip_split_join.hpp"
+#include <cstdint>
+#include <type_traits>
 
 using namespace std;
 

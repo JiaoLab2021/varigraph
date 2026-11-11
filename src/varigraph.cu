@@ -1,6 +1,7 @@
 // g++ -c graph.cpp -std=c++17 -O3 -march=native
 
 #include "../include/varigraph.cuh"
+#include "../include/logger.hpp"
 
 
 /**
@@ -8,21 +9,21 @@
  * @date 2024/04/29
  * @version v1.0.1
  * @brief Construct genome graph from reference genome and variants
- * 
+ *
  * @return void
 **/
 void VarigraphKernel::construct_kernel() {
     ConstructIndexKernelClassPtr_ = new ConstructIndexKernel(
-        refFileName_, 
-        vcfFileName_, 
-        inputGraphFileName_, 
-        outputGraphFileName_, 
-        fastMode_, 
-        useUniqueKmers_, 
-        kmerLen_, 
-        vcfPloidy_, 
-        debug_, 
-        threads_, 
+        refFileName_,
+        vcfFileName_,
+        inputGraphFileName_,
+        outputGraphFileName_,
+        fastMode_,
+        useUniqueKmers_,
+        kmerLen_,
+        vcfPloidy_,
+        debug_,
+        threads_,
         buffer_
     );
 
@@ -48,15 +49,15 @@ void VarigraphKernel::construct_kernel() {
     ConstructIndexKernelClassPtr_->clear_mbf();
 
     // log
-    cerr << endl;
-    cerr << "           - " << "Total number of bases in the Genome Graph: " << ConstructIndexKernelClassPtr_->mGraphBaseNum << endl;
-    cerr << "           - " << "Total number of k-mers present in the Genome Graph: " << ConstructIndexKernelClassPtr_->mGraphKmerHashHapStrMap.size() << endl;
-    cerr << "           - " << "Total number of haplotypes present in the Genome Graph: " << ConstructIndexKernelClassPtr_->mHapMap.size() << endl << endl << endl;
+    stage_stream() << "Graph construction summary\n";
+    log_stream() << "  - Bases: " << ConstructIndexKernelClassPtr_->mGraphBaseNum << '\n';
+    log_stream() << "  - K-mers: " << ConstructIndexKernelClassPtr_->mGraphKmerHashHapStrMap.size() << '\n';
+    log_stream() << "  - Haplotypes: " << ConstructIndexKernelClassPtr_->mHapMap.size() << '\n';
 }
 
 /**
  * @brief fastq and genotype
- * 
+ *
  * @return void
 */
 void VarigraphKernel::fastq_genotype_kernel() {
@@ -64,8 +65,9 @@ void VarigraphKernel::fastq_genotype_kernel() {
     ConstructIndexClassPtr_->graph2node();
 
     // fastq and genotype
-    for (const auto& [sampleName, fastqFileNameVec] : sampleConfigTupleVec_) {  // vector<tuple<sampleName, vector<readPath> > >
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Processing sample: " << sampleName << endl << endl;
+    for (size_t sampleIndex = 0; sampleIndex < sampleConfigTupleVec_.size(); ++sampleIndex) {
+        const auto& [sampleName, fastqFileNameVec] = sampleConfigTupleVec_[sampleIndex];
+        stage_stream() << "Processing sample: " << sampleName << '\n';
 
         // fastq
         kmer_read_kernel(fastqFileNameVec);
@@ -73,10 +75,11 @@ void VarigraphKernel::fastq_genotype_kernel() {
         // genotype
         genotype(sampleName);
 
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Sample: " << sampleName << " has been processed." << endl << endl << endl;
-
-        // Reset ConstructIndexClassPtr_
-        ConstructIndexClassPtr_->reset();
+        // Only another sample needs the graph coverage and posterior state reset.
+        if (sampleIndex + 1 < sampleConfigTupleVec_.size()) {
+            ConstructIndexClassPtr_->reset();
+        }
+        log_stream() << "  - Sample completed: " << sampleName << '\n';
     }
 }
 
@@ -85,18 +88,18 @@ void VarigraphKernel::fastq_genotype_kernel() {
  * @date 2024/04/30
  * @version v1.0.1
  * @brief build the kmer index of files
- * 
+ *
  * @param fastqFileNameVec    Sequencing data
- * 
+ *
  * @return void
 **/
 void VarigraphKernel::kmer_read_kernel(vector<string> fastqFileNameVec) {
     // Computing the frequency of variants and noisy k-mers
     FastqKmerKernel FastqKmerKernelClass(
-        ConstructIndexClassPtr_->mGraphKmerHashHapStrMap, 
-        fastqFileNameVec, 
-        kmerLen_, 
-        threads_, 
+        ConstructIndexClassPtr_->mGraphKmerHashHapStrMap,
+        fastqFileNameVec,
+        kmerLen_,
+        threads_,
         buffer_
     );
 
@@ -109,10 +112,10 @@ void VarigraphKernel::kmer_read_kernel(vector<string> fastqFileNameVec) {
     // Calculate Average Coverage (variants k-mers)  2023/12/05
     cal_ave_cov_kmer();
 
-    cerr << endl;
-    cerr << fixed << setprecision(2);
-    cerr << "           - " << "Size of the sequenced data: " << FastqKmerKernelClass.mReadBase / 1e9 << " Gb" << endl;
-    cerr << "           - " << "Depth of the sequenced data: " << ReadDepth_ << endl;
-    cerr << "           - " << "Coverage of haplotype k-mers: " << hapKmerCoverage_ << endl << endl << endl;
-    cerr << defaultfloat << setprecision(6);
+    stage_stream() << "Sample coverage summary\n";
+    diagnostic_stream() << fixed << setprecision(2);
+    log_stream() << "  - Read bases: " << FastqKmerKernelClass.mReadBase / 1e9 << " Gb\n";
+    log_stream() << "  - Read depth: " << ReadDepth_ << '\n';
+    log_stream() << "  - Haplotype k-mer coverage: " << hapKmerCoverage_ << '\n';
+    diagnostic_stream() << defaultfloat << setprecision(6);
 }

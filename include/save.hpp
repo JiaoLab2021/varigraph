@@ -13,15 +13,15 @@
 #include <unordered_map>
 
 #include "strip_split_join.hpp"
-#include "get_time.hpp"
+#include "logger.hpp"
 
 using namespace std;
 
 /**
  * @brief save result
- * 
+ *
  * @param outputFileName
- * 
+ *
  * @return
 **/
 class SAVE
@@ -32,49 +32,18 @@ private:
 
     // file handle
     ofstream fpO;
-    gzFile gzfpO;
+    gzFile gzfpO = nullptr;
 public:
-    SAVE() {}
-    SAVE(string aliFileName) {
-        outputFileName_ = aliFileName;
+    SAVE() = default;
+    explicit SAVE(string outputFileName);
+    ~SAVE();
 
-        if (outputFileName_.find(".gz") != string::npos || outputFileName_.find(".GZ") != string::npos)
-        {
-            // open file
-            gzfpO = gzopen(outputFileName_.c_str(), "wb");
-            if(!gzfpO)
-            {
-                cerr << "[" << __func__ << "::" << getTime() << "] " 
-                    << "'" << outputFileName_ << "': No such file or directory." << endl;
-                exit(1);
-            }
-        }
-        else if (outputFileName_.size() > 0)
-        {
-            // open file
-            fpO.open(outputFileName_, ios::out);
-            if(!fpO)
-            {
-                cerr << "[" << __func__ << "::" << getTime() << "] " 
-                    << "'" << outputFileName_ << "': No such file or directory." << endl;
-                exit(1);
-            }
-        }
-    }
-    ~SAVE() {
-        if (outputFileName_.find(".gz") != string::npos || outputFileName_.find(".GZ") != string::npos)
-        {
-            // close file
-            gzclose(gzfpO);
-        }
-        else if (outputFileName_.size() > 0)
-        {
-            // close file
-            fpO.close();
-        }
-    }
-    
+    SAVE(const SAVE&) = delete;
+    SAVE& operator=(const SAVE&) = delete;
+
     int save(string & outTxt);
+    // Finish the output and report buffered write errors before claiming success.
+    void close();
 };
 
 #endif

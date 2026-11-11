@@ -35,13 +35,22 @@ git clone https://github.com/JiaoLab2021/varigraph.git
 cd varigraph
 ```
 
-2. Next, compile the software and add the current directory to your system's `PATH` environment variable.
+2. Next, compile the software.
 
 ```shell
 cmake ./
 make -j 5
-echo 'export PATH="$PATH:'$(pwd)'"' >> ~/.bashrc
-source ~/.bashrc
+```
+
+To complete subcommands, files and directories with <kbd>Tab</kbd> in Bash, add these lines to `~/.bashrc`, adjust the paths to your installation, then run `source ~/.bashrc`:
+
+```bash
+export PATH="/path/to/varigraph:$PATH"
+_varigraph_completion_file="/path/to/varigraph/completion/varigraph.bash"
+if [[ -f "$_varigraph_completion_file" ]]; then
+    source "$_varigraph_completion_file"
+fi
+unset _varigraph_completion_file
 ```
 
 ## Usage

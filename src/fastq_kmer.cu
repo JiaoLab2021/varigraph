@@ -1,4 +1,6 @@
 #include "../include/fastq_kmer.cuh"
+#include "../include/logger.hpp"
+#include "../include/GzChunkReader.hpp"
 
 using namespace std;
 
@@ -7,19 +9,19 @@ __device__ char toupper_device(char c) {
 }
 
 // kseq.h
-KSEQ_INIT(gzFile, gzread)
+KSEQ_INIT(gzFile, read_gzip_checked)
 
 /**
  * @author zezhen du
  * @date 2024/04/30
  * @version v1.0.1
  * @brief building the kmer index of sequencing read
- * 
+ *
  * @return void
 **/
 void FastqKmerKernel::build_fastq_index_kernel() {
     if (fastqFileNameVec_.empty()) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -f\n";
+        error_stream() << "Parameter error: -f\n";
         exit(1);
     }
 
@@ -35,13 +37,13 @@ void FastqKmerKernel::build_fastq_index_kernel() {
  * @date 2024/04/30
  * @version v1.0
  * @brief building the kmer index of sequencing read
- * 
+ *
  * @param fastqFileName       sequencing read
- * 
+ *
  * @return void
 **/
 void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from read on GPU: " << fastqFileName << endl;  // print log
+    stage_stream() << "Collecting read k-mers on GPU: " << fastqFileName << endl;  // print log
 
     // *************************************************** GPU parameters *************************************************** //
     const uint32_t MAX_CHUNK_SIZE = buffer_ * 1024 * 1024;  // Maximum chunk size
@@ -72,29 +74,37 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
 
     // *************************************************** Thread pool *************************************************** //
     ThreadPool pool(threads_);
-    pool.init();  // Initializes the thread pool
 
     vector<future<void> > futureVec;  // Save the result of multithreading
 
     // *************************************************** Open file *************************************************** //
     gzFile gzfp = gzopen(fastqFileName.c_str(), "rb");
+    std::unique_ptr<gzFile_s, decltype(&gzclose)> input(gzfp, &gzclose);
 
     // open file
     if(!gzfp) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " 
+        error_stream()
                 << "'" << fastqFileName << "': No such file or directory." << endl;
         exit(1);
     }
 
     kseq_t *ks;
     ks = kseq_init(gzfp);
+    std::unique_ptr<kseq_t, decltype(&kseq_destroy)> reader(ks, &kseq_destroy);
 
-    while( kseq_read(ks) >= 0 ) {
+    int read_status;
+    while ((read_status = kseq_read(ks)) >= 0) {
         // ks->name.s records the name
         // ks->seq.s records the sequence
-        uint32_t seqLen = ks->seq.l;
+        const size_t readLength = ks->seq.l;
+        if (readLength >= MAX_CHUNK_SIZE) {
+            error_stream() << "Read '" << ks->name.s << "' has " << readLength
+                           << " bases and exceeds the GPU buffer; increase --buffer.\n";
+            exit(1);
+        }
+        const uint32_t seqLen = static_cast<uint32_t>(readLength);
 
-        if (bufferSize + seqLen + 1 > MAX_CHUNK_SIZE) {
+        if (static_cast<size_t>(bufferSize) + readLength + 1 > MAX_CHUNK_SIZE) {
             // Copy the sequence to the end of the existing data in strD
             gpuErrchk(cudaMemcpy(strD, strH, sizeof(char) * bufferSize, cudaMemcpyHostToDevice));
 
@@ -147,9 +157,9 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
 
                 futureVec.push_back(
                     pool.submit(
-                        fastq_kmer_kernel::add_cov_to_map, 
-                        ref(uniqueKmersH), 
-                        ref(uniqueKmersCountsH), 
+                        fastq_kmer_kernel::add_cov_to_map,
+                        ref(uniqueKmersH),
+                        ref(uniqueKmersCountsH),
                         ref(GraphKmerHashHapStrMap_),
                         startIndex,
                         endIndex
@@ -179,9 +189,9 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
         mReadBase += ks->seq.l;
     }
 
-    // free memory, close file
-    kseq_destroy(ks);
-    gzclose(gzfp);
+    if (read_status < -1) throw std::runtime_error("Invalid sequence or quality record in '" + fastqFileName + "'.");
+    reader.reset();
+    input.reset();
 
     // Last batch
     if (bufferSize > 0) {
@@ -238,9 +248,9 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
             // submit
             futureVec.push_back(
                 pool.submit(
-                    fastq_kmer_kernel::add_cov_to_map, 
-                    ref(uniqueKmersH), 
-                    ref(uniqueKmersCountsH), 
+                    fastq_kmer_kernel::add_cov_to_map,
+                    ref(uniqueKmersH),
+                    ref(uniqueKmersCountsH),
                     ref(GraphKmerHashHapStrMap_),
                     startIndex,
                     endIndex
@@ -260,7 +270,7 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
     }
 
     // Close the thread pool
-    pool.shutdown();
+    pool.stop();
 
     // Free
     delete[] strH;
@@ -276,7 +286,7 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
 
 /**
  * This function adds coverage to a map of k-mers.
- * 
+ *
  * @param kmerHashVec The hash vector of the k-mer.
  * @param kmerCovVec The coverage vector of the k-mer.
  * @param GraphKmerHashHapStrMap The map of k-mers to their coverage and frequency bit vectors.
@@ -284,7 +294,7 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
  * @param endIndex The ending index of the k-mer.
 */
 void fastq_kmer_kernel::add_cov_to_map(
-    const vector<uint64_t>& kmerHashVec, 
+    const vector<uint64_t>& kmerHashVec,
     const vector<uint8_t>& kmerCovVec,
     unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap,
     uint32_t startIndex,

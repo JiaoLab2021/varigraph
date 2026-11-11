@@ -2,7 +2,7 @@
 #define COUNTING_BLOOM_FILTER_CUH
 
 #include "counting_bloom_filter.hpp"
-#include "get_time.hpp"
+#include "logger.hpp"
 #include "cuda_error_handling.hpp"
 
 #include "MurmurHash3.cuh"
@@ -49,8 +49,8 @@ public:
     /*
      * Variable: kmersD
      * -----------------
-     * This variable is declared on the device (GPU) and is only accessible 
-     * from the device code (i.e., CUDA kernels). It cannot be directly accessed 
+     * This variable is declared on the device (GPU) and is only accessible
+     * from the device code (i.e., CUDA kernels). It cannot be directly accessed
      * from the host (CPU) code.
     */
     void add_kernel(uint64_t * kmersD, uint32_t numKmers);
@@ -74,7 +74,7 @@ public:
         gpuErrchk(cudaMemcpy(_filter, _filterD, _size * sizeof(uint8_t), cudaMemcpyDeviceToHost));
 
         // Print a message indicating that the copy operation is complete
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom Filter copied from device to host ...\n";
+        log_stream() << "  - Counting Bloom Filter copied from device to host ...\n";
 
         // Free the memory occupied by the Counting Bloom Filter on the device
         gpuErrchk(cudaFree(_filterD));

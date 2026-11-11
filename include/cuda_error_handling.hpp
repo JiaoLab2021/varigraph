@@ -4,13 +4,13 @@
 #include <iostream>
 #include <cuda_runtime.h>
 
-#include "get_time.hpp"
+#include "logger.hpp"
 
 
 #define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
 inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true) {
    if (code != cudaSuccess) {
-        cerr << "[" << __func__ << "::" << file << "::" << line << "::" << getTime() << "] " << "GPUassert: " << cudaGetErrorString(code) << endl;
+        error_stream() << "GPUassert: " << cudaGetErrorString(code) << " (" << file << ":" << line << ")" << std::endl;
         if (abort) exit(code);
    }
 }

@@ -1,30 +1,27 @@
 // g++ -c construct_index.cpp -std=c++17 -lz -O3 -march=native
 
 #include "../include/kmer.cuh"
+#include "../include/logger.hpp"
+#include "../include/progress_tracker.hpp"
 #include "../include/construct_index.cuh"
 
 using namespace std;
 
-// global variable
-bool debugConstructKernel = false;
-
 // Constructor
 ConstructIndexKernel::ConstructIndexKernel(
-    const string& refFileName, 
-    const string& vcfFileName, 
-    const string& inputGraphFileName, 
-    const string& outputGraphFileName, 
-    const bool& fastMode, 
-    const bool& useUniqueKmers, 
-    const uint32_t& kmerLen, 
-    const uint32_t& vcfPloidy, 
-    const bool& debug, 
-    const uint32_t& threads, 
+    const string& refFileName,
+    const string& vcfFileName,
+    const string& inputGraphFileName,
+    const string& outputGraphFileName,
+    const bool& fastMode,
+    const bool& useUniqueKmers,
+    const uint32_t& kmerLen,
+    const uint32_t& vcfPloidy,
+    const bool& debug,
+    const uint32_t& threads,
     const int buffer
 ) : ConstructIndex(refFileName, vcfFileName, inputGraphFileName, outputGraphFileName, fastMode, useUniqueKmers, kmerLen, vcfPloidy, debug, threads) {
     buffer_ = buffer;  // GPU buffer size
-    // debug
-    debugConstructKernel = debug;
 }
 
 
@@ -33,11 +30,11 @@ ConstructIndexKernel::ConstructIndexKernel(
  * @date 2024/04/29
  * @version v1.0.1
  * @brief Making Counting Bloom Filter
- * 
+ *
  * @return void
 **/
 void ConstructIndexKernel::make_mbf_kernel() {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Initiating computation of k-mer frequencies in the reference genome on GPU ...\n";
+    stage_stream() << "Counting reference k-mers on GPU ...\n";
 
     /* *************************************************** making or load *************************************************** */
     uint64_t bfSize = mGenomeSize - mKmerLen + 1;
@@ -45,7 +42,7 @@ void ConstructIndexKernel::make_mbf_kernel() {
     mbfD = new BloomFilterKernel(bfSize, errorRate);
 
     // making
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Making Counting Bloom Filter with a false positive rate of " << errorRate << " ...\n";
+    log_stream() << "  - Making Counting Bloom Filter with a false positive rate of " << errorRate << " ...\n";
 
     const uint32_t MAX_CHUNK_SIZE = buffer_ * 1024 * 1024;  // GPU buffer size
     const uint32_t MAX_KMER_NUM = MAX_CHUNK_SIZE - mKmerLen + 1;  // sequence.size() 1 mKmerLen + 1
@@ -68,6 +65,7 @@ void ConstructIndexKernel::make_mbf_kernel() {
 
         for (uint32_t i = 0; i < sequenceSize; i += MAX_CHUNK_SIZE) {
             uint32_t chunkSize = std::min(MAX_CHUNK_SIZE, sequenceSize - i);
+            if (chunkSize < mKmerLen) continue;
             uint32_t chunkKmerNum = chunkSize - mKmerLen + 1;
 
             gpuErrchk(cudaMemcpy(strD, sequencePtr + i, sizeof(char) * chunkSize, cudaMemcpyHostToDevice));  // Copy the sequence to the device
@@ -83,9 +81,9 @@ void ConstructIndexKernel::make_mbf_kernel() {
             mbfD->add_kernel(kmersD, chunkKmerNum);
         }
 
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Chromosome '" << chromosome << "' processed successfully ...\n";
+        log_stream() << "  - Chromosome '" << chromosome << "' processed successfully ...\n";
     }
-    
+
     // copies the content of the Counting Bloom Filter from the device (GPU) to the host (CPU).
     mbfD->copyFilterDToHost();
     gpuErrchk(cudaDeviceSynchronize());  // Wait for the GPU to finish operations
@@ -94,13 +92,13 @@ void ConstructIndexKernel::make_mbf_kernel() {
     gpuErrchk(cudaFree(strD));
     gpuErrchk(cudaFree(kmersD));
 
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Counting Bloom Filter constructed successfully ..." << endl << endl;
+    log_stream() << "  - Counting Bloom Filter constructed successfully ..." << endl;
 
-    cerr << "           - " << "Counting Bloom Filter size: " << mbfD->get_size() << endl;
-    cerr << "           - " << "Hash functions count: " << mbfD->get_num() << endl;
-    cerr << fixed << setprecision(2);
-    cerr << "           - " << "Counting Bloom Filter usage rate: " << mbfD->get_cap() << endl << endl << endl;
-    cerr << defaultfloat << setprecision(6);
+    log_stream() << "  - Counting Bloom Filter size: " << mbfD->get_size() << endl;
+    log_stream() << "  - Hash functions count: " << mbfD->get_num() << endl;
+    diagnostic_stream() << fixed << setprecision(2);
+    log_stream() << "  - Counting Bloom Filter usage rate: " << mbfD->get_cap() << endl;
+    diagnostic_stream() << defaultfloat << setprecision(6);
 
     malloc_trim(0);	// 0 is for heap memory
 }
@@ -110,66 +108,45 @@ void ConstructIndexKernel::make_mbf_kernel() {
  * @date 2024/04/28
  * @version v1.0
  * @brief building the k-mer index of graph on GPU
- * 
+ *
  * @return void
 **/
 void ConstructIndexKernel::index_kernel() {
-    // Log the start of the graph index construction on the GPU
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Initiating the construction of the graph index on CPU ...\n";
+    stage_stream() << "Indexing the genome graph ...\n";
 
-    // Save the results of multiple threads
-    vector<future<tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >, map<uint64_t, uint8_t> > > > futureVec;  // nodeIter, KmerHapBitMap, kmerHashFreMap
+    using IndexResult = tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t>>, map<uint64_t, uint8_t>>;
+    struct NodeTask {
+        map<string, map<uint32_t, nodeSrt>>::iterator chromosome;
+        map<uint32_t, nodeSrt>::iterator node;
+        IndexResult result;
+    };
 
-    // Thread Pool
-    ThreadPool pool(threads_);
-
-    // init
-    pool.init();
-
-    // Total number of tasks
-    uint64_t taskNum = 0;
-
-    for(auto& [chromosome, startNodeMap] : mGraphMap) {  // map<chr, map<nodeStart, nodeSrt> >
-        for(auto iter = startNodeMap.begin(); iter != startNodeMap.end(); iter++) {  // map<nodeStart, nodeSrt>
-            if (iter->second.hapGtVec.size() == 1) {continue;}  // Skip the node if there is only one GT (0)
-
-            // submit
-            futureVec.push_back(
-                pool.submit(
-                    index_run_kernel,
-                    chromosome, 
-                    iter, 
-                    ref(startNodeMap), 
-                    ref(fastMode_), 
-                    ref(useUniqueKmers_), 
-                    ref(mKmerLen), 
-                    mbfD, 
-                    ref(mVcfPloidy), 
-                    ref(mHapIdxQRmap)
-                )
-            );
-
-            // number of tasks
-            taskNum++;
+    size_t taskNum = 0;
+    for (const auto& [chromosome, nodes] : mGraphMap) {
+        for (const auto& [position, node] : nodes) {
+            if (node.hapGtVec.size() != 1) ++taskNum;
         }
     }
-
-    // Number of tasks processed
-    uint64_t taskProcessNum = 0;
-
-    // Save multithreaded results to graph
-    for (auto& futureResult : futureVec) {  // vector<future<{nodeIter, KmerHapBitMap, kmerHashFreMap}> >
-        auto [nodeIter, KmerHapBitMap, kmerHashFreMap] = move(futureResult.get());  // {nodeIter, KmerHapBitMap, kmerHashFreMap}
-
-        if (KmerHapBitMap.empty()) {
-            continue;
+    vector<NodeTask> tasks;
+    tasks.reserve(taskNum);
+    for (auto chromosome = mGraphMap.begin(); chromosome != mGraphMap.end(); ++chromosome) {
+        for (auto node = chromosome->second.begin(); node != chromosome->second.end(); ++node) {
+            if (node->second.hapGtVec.size() != 1) tasks.push_back({chromosome, node, {}});
         }
+    }
+    ProgressTracker progress(tasks.size());
+    ThreadPool pool(threads_);
+
+    // Merge in graph order to preserve frequency updates and serialization order.
+    auto merge_result = [&](IndexResult& result) {
+        auto& [nodeIter, KmerHapBitMap, kmerHashFreMap] = result;
+        if (KmerHapBitMap.empty()) return;
 
         // Node k-mer information
         auto& kmerHashVec = nodeIter->second.kmerHashVec;
 
         // Bitmap corresponding to node k-mer
-        for (const auto& [kmerHash, BitVec] : KmerHapBitMap) {  // unordered_map<uint64_t, vector<int8_t> > KmerHapBitMap
+        for (auto& [kmerHash, BitVec] : KmerHapBitMap) {  // unordered_map<uint64_t, vector<int8_t> > KmerHapBitMap
             kmerHashVec.push_back(kmerHash);
 
             auto emplaceResult = mGraphKmerHashHapStrMap.emplace(kmerHash, kmerCovFreBitVec{});
@@ -185,7 +162,7 @@ void ConstructIndexKernel::index_kernel() {
                 for (uint64_t i = 0; i < BitVec.size(); i++) {
                     nodeBitVec[i] |= BitVec[i];
                 }
-                
+
                 if (emplacedValue.f < UINT8_MAX) {
                     emplacedValue.f++;
                 }
@@ -196,7 +173,7 @@ void ConstructIndexKernel::index_kernel() {
         for (const auto& [kmerHash, frequency] : kmerHashFreMap) {  // map<uint64_t, uint8_t>
             auto findIter = mGraphKmerHashHapStrMap.find(kmerHash);
             if (findIter == mGraphKmerHashHapStrMap.end()) {
-                cerr << "[" << __func__ << "::" << getTime() << "] " 
+                error_stream()
                     << "Error: The k-mer hash '" << kmerHash << "' is not found in the mGraphKmerHashHapStrMap." << endl;
                 exit(1);
             }
@@ -206,30 +183,34 @@ void ConstructIndexKernel::index_kernel() {
             }
         }
 
-        // tasks processed
-        taskProcessNum++;
+    };
 
-        // Print log every 5% of tasks
-        if (taskProcessNum > 0 && taskNum >= 20 && taskProcessNum % (taskNum / 20) == 0) {
-            cerr << "[" << __func__ << "::" << getTime() << "] " << std::fixed << std::setprecision(0) << "Indexing progress: " << std::setw(3) << static_cast<double>(taskProcessNum) / taskNum * 100.0 << "%\n";
-        }
+    // Workers claim subsequent nodes without waiting for an earlier node to finish.
+    pool.parallel_for(tasks.size(), [&](size_t index) {
+        auto& task = tasks[index];
+        task.result = index_run_kernel(
+            task.chromosome->first, task.node, task.chromosome->second,
+            fastMode_, useUniqueKmers_, mKmerLen, mbfD, mVcfPloidy, mHapIdxQRmap);
+        progress.hit();
+    });
+    pool.stop();
+
+    stage_stream() << "Merging indexed nodes ...\n";
+    for (auto& task : tasks) {
+        // Release each consumed result immediately, preserving the original graph order.
+        auto result = move(task.result);
+        merge_result(result);
     }
-
-    // free memory
-    vector<future<tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >, map<uint64_t, uint8_t> > > >().swap(futureVec);
-
-    malloc_trim(0);	// 0 is for heap memory
-
-    // Close the thread pool
-    pool.shutdown();
+    vector<NodeTask>().swap(tasks);
+    malloc_trim(0);
 }
 
 
 /**
  * @brief graph index for k-mer on GPU
- * 
+ *
  * @date 2024/04/29
- * 
+ *
  * @param chromosome            mGraphMap output by construct  map<chr, map<start, nodeSrt> >
  * @param nodeIter              node iterator
  * @param startNodeMap          Chromosome all nodes
@@ -239,18 +220,18 @@ void ConstructIndexKernel::index_kernel() {
  * @param bfD                   Counting Bloom Filter on GPU
  * @param vcfPloidy             ploidy of genotypes in VCF file
  * @param hapIdxQRmap           map<hapIdx, tuple<quotient, remainder> >
- * 
+ *
  * @return {nodeIter, tmpKmerHapBitMap, kmerHashFreMap}     kmer: map<kmerHash, vector<int8_t> >
 **/
 tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >, map<uint64_t, uint8_t> > index_run_kernel(
-    string chromosome, 
-    map<uint32_t, nodeSrt>::iterator nodeIter, 
-    const map<uint32_t, nodeSrt>& startNodeMap, 
-    const bool& fastMode, 
+    string chromosome,
+    map<uint32_t, nodeSrt>::iterator nodeIter,
+    const map<uint32_t, nodeSrt>& startNodeMap,
+    const bool& fastMode,
     const bool& useUniqueKmers,
-    const uint32_t& kmerLen, 
-    BloomFilterKernel* bfD, 
-    const uint32_t& vcfPloidy, 
+    const uint32_t& kmerLen,
+    BloomFilterKernel* bfD,
+    const uint32_t& vcfPloidy,
     const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap
 ) {
     // Minimum k-mer frequency
@@ -265,7 +246,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
     const auto& hapGtVec = nodeIter->second.hapGtVec;  // vector<gt>
 
     uint16_t haplotype = 0;  // Index of the haplotype
-    
+
     for (const auto& gt : hapGtVec) {  // Iterate over the genotypes
         // fast mode
         // calculate whether the genotype of the corresponding sample is empty or zero. If it is, skip all its haplotypes
@@ -279,17 +260,17 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
                 hapGtVec.begin() + hapIdxR + 1,
                 0
             );
-            
+
             if (gtSum == 0) {
                 // Haplotype index increment
                 ++haplotype;
                 continue;
             }
         }
-        
+
         // Check if the array is out of range
         if (gt >= seqVec.size()) {
-            cerr << "[" << __func__ << "::" << getTime() << "] "
+            error_stream()
                  << "Error: The node '" << chromosome << "-" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
             exit(1);
         }
@@ -299,16 +280,14 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
 
         // Sequence with upstream and downstream 1 k-mer sequence
         pair<string, string> upDownSeq = construct_index::find_node_up_down_seq(
-            haplotype, 
-            gt, 
-            seqTmp, 
-            kmerLen - 1, 
-            nodeIter, 
+            haplotype,
+            gt,
+            seqTmp,
+            kmerLen - 1,
+            nodeIter,
             startNodeMap
         );
-        if (debugConstructKernel) {
-            cerr << "Node Start:" << nodeIter->first << ", Haplotype:" << haplotype << ", GT:" << +gt << ", Upstream:" << upDownSeq.first << ", Current:" << seqTmp << ", Downstream:" << upDownSeq.second << endl << endl;
-        }
+        debug_stream() << "Node Start:" << nodeIter->first << ", Haplotype:" << haplotype << ", GT:" << +gt << ", Upstream:" << upDownSeq.first << ", Current:" << seqTmp << ", Downstream:" << upDownSeq.second << endl;
 
         seqTmp = upDownSeq.first + seqTmp + upDownSeq.second;  // Add upstream and downstream sequences
 

@@ -3,22 +3,33 @@
 
 #include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string.h>
 #include <zlib.h>
-#include "get_time.hpp"
+#include "logger.hpp"
+
+// Keep zlib errors out of both line readers and kseq's unsigned buffer lengths.
+inline int read_gzip_checked(gzFile file, void* buffer, unsigned int size) {
+    const int bytes_read = gzread(file, buffer, size);
+    int error_code = Z_OK;
+    const char* error_message = gzerror(file, &error_code);
+    if (bytes_read < 0 || (error_code != Z_OK && error_code != Z_STREAM_END)) {
+        throw std::runtime_error(std::string("Cannot read compressed input: ") + error_message);
+    }
+    return bytes_read;
+}
 
 class GzChunkReader {
 public:
     explicit GzChunkReader(const std::string& file_path, const size_t chunk_size = 1024 * 1024)  // Default 1Mb cache
         : file_path_(file_path), chunk_size_(chunk_size),
-          chunk_buffer_(new char[chunk_size_]), buffer_pos_(0), buffer_end_(0) 
+          chunk_buffer_(new char[chunk_size_]), buffer_pos_(0), buffer_end_(0)
     {
         // File handle is of type gzFile
         file_ = gzopen(file_path_.c_str(), "rb");
 
         if (!file_) {
-            std::cerr << "[" << __func__ << "::" << getTime() << "] "
-                << "'" << file_path_ << "': No such file or directory." << std::endl;
+            error_stream() << "'" << file_path_ << "': No such file or directory." << std::endl;
             exit(1);
         }
     }
@@ -62,17 +73,10 @@ public:
 
 private:
     bool read_chunk() {
-        if (gzeof(file_)) {
-            return false;
-        }
-
         buffer_pos_ = 0;
-        buffer_end_ = gzread(file_, chunk_buffer_.get(), chunk_size_);
-
-        if (buffer_end_ <= 0) {
-            return false;
-        }
-
+        const int bytes_read = read_gzip_checked(file_, chunk_buffer_.get(), chunk_size_);
+        buffer_end_ = static_cast<size_t>(bytes_read);
+        if (buffer_end_ == 0) return false;
         buffer_ = chunk_buffer_.get();
         return true;
     }

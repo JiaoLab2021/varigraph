@@ -1,12 +1,18 @@
 // g++ -c fastq_kmer.cpp -o fastq_kmer.o -std=c++17 -O3 -march=native
 
 #include "../include/fastq_kmer.hpp"
+#include "../include/logger.hpp"
+#include "../include/GzChunkReader.hpp"
+#include "../include/progress_tracker.hpp"
+#include <chrono>
+#include <deque>
+#include <mutex>
 
 using namespace std;
 
 
 // kseq.h
-KSEQ_INIT(gzFile, gzread)
+KSEQ_INIT(gzFile, read_gzip_checked)
 
 
 /**
@@ -14,18 +20,18 @@ KSEQ_INIT(gzFile, gzread)
  * @date 2023/07/17
  * @version v1.0
  * @brief building the kmer index of sequencing read
- * 
+ *
  * @param GraphKmerCovFreMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVecP>
  * @param fastqFileNameVec       the vector of sequencing read
  * @param kmerLen                the length of k-mer
  * @param threads                threads
- * 
+ *
  * @return void
 **/
 FastqKmer::FastqKmer(
-    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap, 
-    const vector<string>& fastqFileNameVec, 
-    const uint32_t& kmerLen, 
+    unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap,
+    const vector<string>& fastqFileNameVec,
+    const uint32_t& kmerLen,
     const uint32_t & threads
 ) : GraphKmerHashHapStrMap_(GraphKmerHashHapStrMap), fastqFileNameVec_(fastqFileNameVec), kmerLen_(kmerLen), threads_(threads) {}
 
@@ -35,12 +41,12 @@ FastqKmer::FastqKmer(
  * @date 2023/06/27
  * @version v1.0.1
  * @brief building the kmer index of sequencing read
- * 
+ *
  * @return void
 **/
 void FastqKmer::build_fastq_index() {
     if (fastqFileNameVec_.empty()) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " << "Parameter error: -f\n";
+        error_stream() << "Parameter error: -f\n";
         exit(1);
     }
 
@@ -57,133 +63,72 @@ void FastqKmer::build_fastq_index() {
  * @date 2023/09/06
  * @version v1.0
  * @brief building the kmer index of sequencing read
- * 
+ *
  * @param fastqFileName       sequencing read
- * 
+ *
  * @return void
 **/
-void FastqKmer::fastq_file_open(
-    const string & fastqFileName
-) {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Collecting kmers from read on CPU: " << fastqFileName << endl;  // print log
+void FastqKmer::fastq_file_open(const string& fastqFileName) {
+    stage_stream() << "Collecting read k-mers on CPU: " << fastqFileName << '\n';
 
-    // Save the result of multithreading
-    vector<future<vector<uint64_t> > > hashVecVec;  // vector<kmerVec>
-
-    // open read file
     gzFile gzfp = gzopen(fastqFileName.c_str(), "rb");
-
-    // Thread pool
-    ThreadPool pool(threads_);
-    const int MAX_THREADS_NUM = threads_*100;  // maximum number of queues
-
-    // Initializes the thread pool
-    pool.init();
-
-    // Save a temporary list of sequences for multithreaded submission tasks
-    vector<string> sequenceVecTmp;
-
-    // open file
-    if(!gzfp) {
-        cerr << "[" << __func__ << "::" << getTime() << "] " 
-                << "'" << fastqFileName 
-                << "': No such file or directory." 
-                << endl;
+    std::unique_ptr<gzFile_s, decltype(&gzclose)> input(gzfp, &gzclose);
+    if (!gzfp) {
+        error_stream() << "'" << fastqFileName << "': No such file or directory.\n";
         exit(1);
-    } else {
-        kseq_t *ks;
-        ks = kseq_init(gzfp);
-    
-        while( kseq_read(ks) >= 0 ) {
-            // ks->name.s records the name
-            // ks->seq.s records the sequence
-            // Uppercase
-            string sequence = ks->seq.s;
-            transform(sequence.begin(),sequence.end(),sequence.begin(),::toupper);
-
-            // read size
-            mReadBase += ks->seq.l;
-
-            // Store sequences for multithreaded submission
-            sequenceVecTmp.push_back(sequence);
-
-            // If the value is greater than the threshold, submit the task
-            if (sequenceVecTmp.size() >= MAX_THREADS_NUM) {
-                // submit
-                hashVecVec.push_back(
-                    pool.submit(
-                        fastq_kmer::fastq_file_open_run, 
-                        sequenceVecTmp, 
-                        kmerLen_, 
-                        ref(GraphKmerHashHapStrMap_)
-                    )
-                );
-                // clear
-                sequenceVecTmp.clear();
-            }
-
-            // If the maximum number of queues is reached
-            if (hashVecVec.size() >= MAX_THREADS_NUM) {
-                // Save multithreaded results into hash table
-                for (size_t i = 0; i < hashVecVec.size(); i++) {  // vector<kmerVec>
-                    auto hashVecTmp = move(hashVecVec[i].get());
-
-                    // Record coverage of variant k-mers
-                    for (const auto& hash : hashVecTmp) {  // vector<uint64_t>
-                        auto& kmerCov = GraphKmerHashHapStrMap_[hash].c;
-                        // if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
-                        if (kmerCov < UINT8_MAX) {  // Prevent variable out of bounds
-                            kmerCov++;
-                        }
-                    }
-                }
-                hashVecVec.clear();
-            }
-        }
-
-        // free memory, close file
-        kseq_destroy(ks);
-        gzclose(gzfp);
     }
 
-    // submit
-    if (sequenceVecTmp.size() > 0)
-    {
-        hashVecVec.push_back(
-            pool.submit(
-                fastq_kmer::fastq_file_open_run, 
-                sequenceVecTmp, 
-                kmerLen_, 
-                ref(GraphKmerHashHapStrMap_)
-            )
-        );
-        // free memory
-        vector<string>().swap(sequenceVecTmp);
-    }
-    
-    // last save
-    if (hashVecVec.size() > 0){
-        // Save multithreaded results into hash table
-        for (size_t i = 0; i < hashVecVec.size(); i++) {  // vector<kmerVec>
-            auto hashVecTmp = move(hashVecVec[i].get());
-
-            // Record coverage of variant k-mers
-            for (const auto& hash : hashVecTmp) {  // vector<uint64_t>
-                auto& kmerCov = GraphKmerHashHapStrMap_[hash].c;
-                // if (kmerCov < UINT8_MAX - 1) {  // Prevent variable out of bounds
-                if (kmerCov < UINT8_MAX) {  // Prevent variable out of bounds
-                    kmerCov++;
+    deque<future<void>> results;
+    auto progress = ProgressTracker::Every(1000000);
+    ThreadPool pool(threads_);
+    const size_t batch_size = static_cast<size_t>(threads_) * 100;
+    vector<string> sequences;
+    auto submit_batch = [&] {
+        results.push_back(pool.submit([this, &progress, batch = std::move(sequences)]() mutable {
+            const auto read_count = batch.size();
+            auto hashes = fastq_kmer::fastq_file_open_run(std::move(batch), kmerLen_, GraphKmerHashHapStrMap_);
+            // Sketching only reads keys; serialize coverage writes without changing map structure.
+            {
+                std::lock_guard<std::mutex> lock(mtx);
+                for (const auto hash : hashes) {
+                    auto& coverage = GraphKmerHashHapStrMap_.at(hash).c;
+                    if (coverage < UINT8_MAX) ++coverage;
                 }
             }
+            progress.hit(read_count);
+        }));
+        sequences.clear();
+        // The bounded pool supplies backpressure; a slow first batch must not stop input.
+        for (auto result = results.begin(); result != results.end();) {
+            if (result->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+                result->get();
+                result = results.erase(result);
+            } else {
+                ++result;
+            }
         }
-        vector<future<vector<uint64_t> > >().swap(hashVecVec);
+    };
+
+    kseq_t* ks = kseq_init(gzfp);
+    std::unique_ptr<kseq_t, decltype(&kseq_destroy)> reader(ks, &kseq_destroy);
+    int read_status;
+    while ((read_status = kseq_read(ks)) >= 0) {
+        string sequence = ks->seq.s;
+        transform(sequence.begin(), sequence.end(), sequence.begin(), ::toupper);
+        mReadBase += ks->seq.l;
+        sequences.push_back(std::move(sequence));
+        if (sequences.size() >= batch_size) submit_batch();
     }
+    if (read_status < -1) throw std::runtime_error("Invalid sequence or quality record in '" + fastqFileName + "'.");
+    reader.reset();
+    input.reset();
 
-    // Close the thread pool
-    pool.shutdown();
-
-    // free memory
-    malloc_trim(0);	 // 0 is for heap memory
+    if (!sequences.empty()) submit_batch();
+    for (auto& result : results) result.get();
+    results.clear();
+    pool.stop();
+    progress.finish();
+    malloc_trim(0);
 }
 
 
@@ -192,14 +137,14 @@ void FastqKmer::fastq_file_open(
  * @date 2023/07/18
  * @version v1.0.1
  * @brief Save the k-mer statistical results of fastq
- * 
+ *
  * @param outputFileName
- * 
+ *
  * @return void
 **/
 void FastqKmer::save_index(const string & outputFileName) {
     // log
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Reads index saved to file: " << outputFileName << endl;
+    stage_stream() << "Writing read index: " << outputFileName << endl;
 
     std::ofstream outputFile(outputFileName, std::ios::binary);
     if (outputFile) {
@@ -228,7 +173,7 @@ void FastqKmer::save_index(const string & outputFileName) {
 
         outputFile.close();
     } else {
-        cerr << "[" << __func__ << "::" << getTime() << "] "
+        error_stream()
             << "'" << outputFileName << "': No such file or directory." << endl;
         exit(1);
     }
@@ -240,16 +185,16 @@ void FastqKmer::save_index(const string & outputFileName) {
  * @date 2023/07/18
  * @version v1.0.1
  * @brief load the k-mer index from disk
- * 
+ *
  * @param inputFileName
- * 
+ *
  * @return void
 **/
 void FastqKmer::load_index(
     const string & inputFileName
 )
 {
-    cerr << "[" << __func__ << "::" << getTime() << "] " << "Reads index loaded from file: " << inputFileName << endl;  // print log
+    stage_stream() << "Reading read index: " << inputFileName << endl;  // print log
 
     std::ifstream inputFile(inputFileName, std::ios::binary);
     if (inputFile) {
@@ -291,7 +236,7 @@ void FastqKmer::load_index(
         inputFile.close();
     } else {
         // log
-        cerr << "[" << __func__ << "::" << getTime() << "] "
+        error_stream()
             << "'" << inputFileName << "': No such file or directory." << endl;
         exit(1);
     }
@@ -304,16 +249,16 @@ void FastqKmer::load_index(
  * @date 2023/08/01
  * @version v1.0.1
  * @brief Component index multithreaded functions to reduce thread locks
- * 
+ *
  * @param sequenceVec                sequence vector
  * @param kmerLen                    The length of kmer
  * @param GraphKmerHashHapStrMap     Record the coverage and frequency of all k-mers in the graph: map<kmerHash, kmerCovFreBitVec>
- * 
+ *
  * @return hashVec               vector<uint64_t>
 **/
 vector<uint64_t> fastq_kmer::fastq_file_open_run(
-    vector<string> sequenceVec, 
-    uint32_t kmerLen, 
+    vector<string> sequenceVec,
+    uint32_t kmerLen,
     const unordered_map<uint64_t, kmerCovFreBitVec>& GraphKmerHashHapStrMap
 ) {
     // A temporary list of hash values
