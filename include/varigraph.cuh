@@ -12,10 +12,10 @@ using namespace std;
 class VarigraphKernel : public Varigraph {
 public:
     ConstructIndexKernel* ConstructIndexKernelClassPtr_ = nullptr;  // Record the index of graph and reference genome
-    int buffer_ = 100;  // Buffer size
+    int buffer_;  // GPU buffer size in MB
 
     // Constructor
-    VarigraphKernel(const VarigraphConfig& config, const GpuOptions& gpu)
+    VarigraphKernel(const VarigraphConfig& config, const GpuConfig& gpu)
         : Varigraph(config), buffer_(gpu.buffer) {}
 
     // Destructor

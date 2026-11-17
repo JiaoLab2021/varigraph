@@ -61,6 +61,7 @@ if(CUDA_FOUND)
     # Add executable for GPU version
     cuda_add_executable(varigraph-gpu main.cpp src/CommandRunner.cu ${SRC_FILES_CLI} ${SRC_FILES_CPU} ${SRC_FILES_GPU})
     target_compile_definitions(varigraph-gpu PRIVATE VARIGRAPH_GPU)
+    target_compile_options(varigraph-gpu PRIVATE -O3)
 
     # Set CUDA_ARCHITECTURES
     set_property(TARGET varigraph-gpu PROPERTY CUDA_ARCHITECTURES "sm_50")

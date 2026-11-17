@@ -74,12 +74,12 @@ void VarigraphKernel::fastq_genotype_kernel() {
 
         // genotype
         genotype(sampleName);
+        log_stream() << "  - Sample completed: " << sampleName << '\n';
 
         // Only another sample needs the graph coverage and posterior state reset.
         if (sampleIndex + 1 < sampleConfigTupleVec_.size()) {
             ConstructIndexClassPtr_->reset();
         }
-        log_stream() << "  - Sample completed: " << sampleName << '\n';
     }
 }
 

@@ -1,5 +1,6 @@
 #include "../include/fastq_kmer.cuh"
 #include "../include/logger.hpp"
+#include "../include/progress_tracker.hpp"
 #include "../include/GzChunkReader.hpp"
 
 using namespace std;
@@ -49,6 +50,8 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
     const uint32_t MAX_CHUNK_SIZE = buffer_ * 1024 * 1024;  // Maximum chunk size
     const uint32_t MAX_KMER_NUM = MAX_CHUNK_SIZE - kmerLen_ + 1;  // sequence.size() - kmerLen_ + 1
     uint32_t bufferSize = 0;  // Buffer size
+    size_t bufferReads = 0;  // reads in the buffer
+    auto progress = ProgressTracker::Every(1000000);
 
     // Calculate the size of the grid and thread blocks
     int blockSize = 64;
@@ -172,9 +175,11 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
             }
             // Clear
             vector<future<void> >().swap(futureVec);
+            progress.hit(bufferReads);
 
             // Reset the buffer size
             bufferSize = 0;
+            bufferReads = 0;
         }
 
         // Copy the sequence to the end of the existing data in strH
@@ -183,7 +188,8 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
 
         // Add the 'N' character to the end of the sequence in strH
         strH[bufferSize] = 'N';
-        bufferSize += 1;  // Update the buffer sizedelete[] strH;
+        bufferSize += 1;  // Update the buffer size
+        ++bufferReads;
 
         // read size
         mReadBase += ks->seq.l;
@@ -264,13 +270,16 @@ void FastqKmerKernel::fastq_file_open_kernel(const string & fastqFileName) {
         }
         // Clear
         vector<future<void> >().swap(futureVec);
+        progress.hit(bufferReads);
 
         // Reset the buffer size
         bufferSize = 0;
+        bufferReads = 0;
     }
 
     // Close the thread pool
     pool.stop();
+    progress.finish();
 
     // Free
     delete[] strH;

@@ -3,6 +3,7 @@
 #include "../include/genotype.hpp"
 #include "../include/construct_index.hpp"
 #include "../include/logger.hpp"
+#include "../include/progress_tracker.hpp"
 
 using namespace std;
 
@@ -108,12 +109,14 @@ int GENOTYPE::genotype(
 
     // Workers take the next window as soon as they finish; no FIFO result wait is needed.
     {
+        ProgressTracker progress(windows.size());
         ThreadPool pool(threads);
         pool.parallel_for(windows.size(), [&](size_t index) {
             const auto& window = windows[index];
             for_bac_post_run(window.chromosome, hapMap, sampleType, samplePloidy,
                             hapKmerCoverage, hapIdxQRmap, window.begin, window.end,
                             kmerLen, haploidNum, transitionProType, svGenotypeBool, vcfInfoMap);
+            progress.hit();
         });
     }
 
@@ -534,17 +537,14 @@ void GENOTYPE::haplotype_selection(
         topHapVec = HaplotypeSelectClass.mTopHapVec;
     }
 
-    std::lock_guard<std::mutex> mtx_locker(genotypeLogMutex);
-    log_stream() << "  - Haplotype selection results for " << chromosome << "-" << newStartNodeIterL->first << ":";  // print log
-    for (uint16_t i = 0; i < topHapVec.size(); i++) {
-        uint16_t hapIdxTmp = topHapVec[i];
-        if (i == 0) {
-            diagnostic_stream() << " " << hapIdxTmp;
-        } else {
-            diagnostic_stream() << ", " << hapIdxTmp ;
+    debug_block() {
+        std::lock_guard<std::mutex> mtx_locker(genotypeLogMutex);
+        debug_stream() << "Haplotype selection results for " << chromosome << "-" << newStartNodeIterL->first << ":";
+        for (uint16_t i = 0; i < topHapVec.size(); i++) {
+            diagnostic_stream() << (i == 0 ? " " : ", ") << topHapVec[i];
         }
+        diagnostic_stream() << endl;
     }
-    diagnostic_stream() << endl;
 }
 
 

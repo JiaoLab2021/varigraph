@@ -6,8 +6,7 @@
 #include <string>
 #include "../include/logger.hpp"
 
-// Select the device and run the GPU workflow with the caller's configuration.
-int run_command(Command command, const AppConfig& config) {
+void run_command(Command command, const AppConfig& config) {
     stage_stream() << "Selecting GPU ...\n";
     const auto selection_status = cudaSetDevice(config.gpu.gpu);
     if (selection_status != cudaSuccess) {
@@ -33,5 +32,4 @@ int run_command(Command command, const AppConfig& config) {
         }
         stage_stream() << "Releasing graph memory ...\n";
     }
-    return 0;
 }

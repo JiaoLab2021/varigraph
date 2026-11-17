@@ -15,7 +15,6 @@
 #include <utility>
 #include <vector>
 
-// A bounded worker pool; the owner submits work and drains it before destruction.
 class ThreadPool {
 public:
     explicit ThreadPool(std::size_t threads, std::size_t capacity = 0)
@@ -96,9 +95,6 @@ public:
             if (worker.joinable()) worker.join();
         }
     }
-
-    std::size_t thread_count() const { return thread_count_; }
-    std::size_t queue_capacity() const { return capacity_; }
 
 private:
     void work() {

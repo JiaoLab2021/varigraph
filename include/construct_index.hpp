@@ -1,8 +1,8 @@
 #ifndef CONSTRUCT_INDEX_HPP
 #define CONSTRUCT_INDEX_HPP
 #include <fstream>
+#include <functional>
 #include <string>
-#include <getopt.h>
 #include <iostream>
 #include <vector>
 #include "zlib.h"
@@ -134,6 +134,12 @@ protected:
     bool useUniqueKmers_;  // use only unique k-mers for indexing
 
     uint32_t threads_;
+
+    using IndexResult = tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >, map<uint64_t, uint8_t> >;  // {node, k-mer bitmaps, reference frequencies}
+    using NodeIndexer = function<IndexResult(const string&, map<uint32_t, nodeSrt>::iterator, const map<uint32_t, nodeSrt>&)>;
+
+    // Index all variant nodes with `index_node` and merge the results in graph order (shared by CPU and GPU).
+    void index_graph(const NodeIndexer& index_node);
 
 public:
     map<string, map<uint32_t, nodeSrt> > mGraphMap;  // Store the sequence and k-mer information of the graph: map<chr, map<nodeStart, nodeSrt> >

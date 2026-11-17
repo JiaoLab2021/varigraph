@@ -90,7 +90,6 @@ void Varigraph::load() {
     vcfPloidy_ = ConstructIndexClassPtr_->mVcfPloidy;
 
     // log
-    stage_stream() << "Loaded graph summary\n";
     log_stream() << "  - Bases: " << ConstructIndexClassPtr_->mGraphBaseNum << '\n';
     log_stream() << "  - K-mers: " << ConstructIndexClassPtr_->mGraphKmerHashHapStrMap.size() << '\n';
     log_stream() << "  - Haplotypes: " << ConstructIndexClassPtr_->mHapMap.size() << '\n';
@@ -121,7 +120,7 @@ void Varigraph::parse_sample_config() {
 
         // check
         if (lineVec.size() <= 1) {
-            error_stream() << "Error: The samples configuration file is missing sequencing file information (" << line << ")." << endl;
+            error_stream() << "The samples configuration file is missing sequencing file information (" << line << ")." << endl;
             exit(1);
         }
 
@@ -134,7 +133,7 @@ void Varigraph::parse_sample_config() {
             if (filesystem::exists(filePath) && filesystem::file_size(filePath) > 0) {
                 fastqsVec.push_back(filePath);
             } else {
-                error_stream() << "Error: File '" << filePath << "' does not exist or is empty." << endl;
+                error_stream() << "File '" << filePath << "' does not exist or is empty." << endl;
                 exit(1);
             }
         }
@@ -164,12 +163,12 @@ void Varigraph::fastq_genotype() {
 
         // genotype
         genotype(sampleName);
+        log_stream() << "  - Sample completed: " << sampleName << '\n';
 
         // Only another sample needs the graph coverage and posterior state reset.
         if (sampleIndex + 1 < sampleConfigTupleVec_.size()) {
             ConstructIndexClassPtr_->reset();
         }
-        log_stream() << "  - Sample completed: " << sampleName << '\n';
     }
 }
 
@@ -331,7 +330,7 @@ tuple<uint8_t, uint8_t> Varigraph::get_hom_kmer_c(const map<uint8_t, uint64_t>& 
     // Check if the data is correct
     if (maxIndex == -1) {
         error_stream()
-            << "Error: Failed to retrieve depth information of k-mers from the sequencing data. Please verify your data." << endl;
+            << "Failed to retrieve depth information of k-mers from the sequencing data. Please verify your data." << endl;
         exit(1);
     }
 
@@ -399,7 +398,7 @@ void Varigraph::kmer_histogram(
         }
         diagnostic_stream() << " " << frequence << endl;
     }
-    log_stream() << "  - Homozygous peak: " << +homCoverage << "; haplotype coverage: " << hapKmerCoverage_ << '\n';
+    log_stream() << "  - Homozygous peak: " << +homCoverage << '\n';
 }
 
 

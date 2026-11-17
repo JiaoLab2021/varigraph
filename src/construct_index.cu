@@ -2,7 +2,6 @@
 
 #include "../include/kmer.cuh"
 #include "../include/logger.hpp"
-#include "../include/progress_tracker.hpp"
 #include "../include/construct_index.cuh"
 
 using namespace std;
@@ -80,8 +79,6 @@ void ConstructIndexKernel::make_mbf_kernel() {
             // Add the k-mers to the counting bloom filter
             mbfD->add_kernel(kmersD, chunkKmerNum);
         }
-
-        log_stream() << "  - Chromosome '" << chromosome << "' processed successfully ...\n";
     }
 
     // copies the content of the Counting Bloom Filter from the device (GPU) to the host (CPU).
@@ -91,8 +88,6 @@ void ConstructIndexKernel::make_mbf_kernel() {
     // Free unified memory
     gpuErrchk(cudaFree(strD));
     gpuErrchk(cudaFree(kmersD));
-
-    log_stream() << "  - Counting Bloom Filter constructed successfully ..." << endl;
 
     log_stream() << "  - Counting Bloom Filter size: " << mbfD->get_size() << endl;
     log_stream() << "  - Hash functions count: " << mbfD->get_num() << endl;
@@ -112,97 +107,9 @@ void ConstructIndexKernel::make_mbf_kernel() {
  * @return void
 **/
 void ConstructIndexKernel::index_kernel() {
-    stage_stream() << "Indexing the genome graph ...\n";
-
-    using IndexResult = tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t>>, map<uint64_t, uint8_t>>;
-    struct NodeTask {
-        map<string, map<uint32_t, nodeSrt>>::iterator chromosome;
-        map<uint32_t, nodeSrt>::iterator node;
-        IndexResult result;
-    };
-
-    size_t taskNum = 0;
-    for (const auto& [chromosome, nodes] : mGraphMap) {
-        for (const auto& [position, node] : nodes) {
-            if (node.hapGtVec.size() != 1) ++taskNum;
-        }
-    }
-    vector<NodeTask> tasks;
-    tasks.reserve(taskNum);
-    for (auto chromosome = mGraphMap.begin(); chromosome != mGraphMap.end(); ++chromosome) {
-        for (auto node = chromosome->second.begin(); node != chromosome->second.end(); ++node) {
-            if (node->second.hapGtVec.size() != 1) tasks.push_back({chromosome, node, {}});
-        }
-    }
-    ProgressTracker progress(tasks.size());
-    ThreadPool pool(threads_);
-
-    // Merge in graph order to preserve frequency updates and serialization order.
-    auto merge_result = [&](IndexResult& result) {
-        auto& [nodeIter, KmerHapBitMap, kmerHashFreMap] = result;
-        if (KmerHapBitMap.empty()) return;
-
-        // Node k-mer information
-        auto& kmerHashVec = nodeIter->second.kmerHashVec;
-
-        // Bitmap corresponding to node k-mer
-        for (auto& [kmerHash, BitVec] : KmerHapBitMap) {  // unordered_map<uint64_t, vector<int8_t> > KmerHapBitMap
-            kmerHashVec.push_back(kmerHash);
-
-            auto emplaceResult = mGraphKmerHashHapStrMap.emplace(kmerHash, kmerCovFreBitVec{});
-            auto& emplacedValue = emplaceResult.first->second;
-
-            if (emplaceResult.second) {
-                emplacedValue.BitVec = move(BitVec);
-                // record frequency of the k-mers informations
-                emplacedValue.f++;
-            } else {
-                auto& nodeBitVec = emplacedValue.BitVec;
-
-                for (uint64_t i = 0; i < BitVec.size(); i++) {
-                    nodeBitVec[i] |= BitVec[i];
-                }
-
-                if (emplacedValue.f < UINT8_MAX) {
-                    emplacedValue.f++;
-                }
-            }
-        }
-
-        // Record the frequencies of k-mer with frequencies≥2 in bf to the graph
-        for (const auto& [kmerHash, frequency] : kmerHashFreMap) {  // map<uint64_t, uint8_t>
-            auto findIter = mGraphKmerHashHapStrMap.find(kmerHash);
-            if (findIter == mGraphKmerHashHapStrMap.end()) {
-                error_stream()
-                    << "Error: The k-mer hash '" << kmerHash << "' is not found in the mGraphKmerHashHapStrMap." << endl;
-                exit(1);
-            }
-            auto& f = findIter->second.f;
-            if (f == 1) {
-                f += frequency - 1;
-            }
-        }
-
-    };
-
-    // Workers claim subsequent nodes without waiting for an earlier node to finish.
-    pool.parallel_for(tasks.size(), [&](size_t index) {
-        auto& task = tasks[index];
-        task.result = index_run_kernel(
-            task.chromosome->first, task.node, task.chromosome->second,
-            fastMode_, useUniqueKmers_, mKmerLen, mbfD, mVcfPloidy, mHapIdxQRmap);
-        progress.hit();
+    index_graph([this](const string& chromosome, map<uint32_t, nodeSrt>::iterator node, const map<uint32_t, nodeSrt>& nodes) {
+        return index_run_kernel(chromosome, node, nodes, fastMode_, useUniqueKmers_, mKmerLen, mbfD, mVcfPloidy, mHapIdxQRmap);
     });
-    pool.stop();
-
-    stage_stream() << "Merging indexed nodes ...\n";
-    for (auto& task : tasks) {
-        // Release each consumed result immediately, preserving the original graph order.
-        auto result = move(task.result);
-        merge_result(result);
-    }
-    vector<NodeTask>().swap(tasks);
-    malloc_trim(0);
 }
 
 
@@ -271,7 +178,7 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
         // Check if the array is out of range
         if (gt >= seqVec.size()) {
             error_stream()
-                 << "Error: The node '" << chromosome << "-" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
+                 << "The node '" << chromosome << "-" << nodeIter->first << "' lacks sequence information for haplotype " << gt << "." << endl;
             exit(1);
         }
 

@@ -1,6 +1,6 @@
 package:
   name: varigraph
-  version: 1.1_r1
+  version: 1.1_r2
 
 source:
   path: .

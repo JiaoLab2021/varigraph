@@ -4,7 +4,6 @@
 #include <vector>
 #include "zlib.h"
 #include <iomanip>
-#include <locale>
 #include <tuple>
 #include <filesystem>
 
@@ -81,9 +80,7 @@ public:
           threads_(config.threads),
           minSupportingGQ_(config.minSupportingGQ),
           useUniqueKmers_(config.useUniqueKmers),
-          useDepth_(config.useDepth) {
-        diagnostic_stream().imbue(std::locale(""));  // Thousandth output
-    }
+          useDepth_(config.useDepth) {}
 
     ~Varigraph() {
         if (ConstructIndexClassPtr_ != nullptr) {

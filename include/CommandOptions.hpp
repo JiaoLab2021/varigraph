@@ -3,6 +3,12 @@
 #include <cstdint>
 #include <string>
 
+#ifdef VARIGRAPH_GPU
+inline constexpr bool gpu_build = true;
+#else
+inline constexpr bool gpu_build = false;
+#endif
+
 enum class Command { Construct, Genotype };
 
 struct VarigraphConfig {
@@ -27,12 +33,12 @@ struct VarigraphConfig {
     bool useDepth = false;
 };
 
-struct GpuOptions {
+struct GpuConfig {
     int gpu = 0;
     int buffer = 100;
 };
 
 struct AppConfig {
     VarigraphConfig common;
-    GpuOptions gpu;
+    GpuConfig gpu;
 };

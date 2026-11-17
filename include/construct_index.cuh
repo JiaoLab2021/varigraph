@@ -17,20 +17,20 @@ class ConstructIndexKernel : public ConstructIndex {
 public:
     BloomFilterKernel* mbfD = nullptr;  // Counting Bloom Filter on GPU
 
-    int buffer_ = 100;  // Buffer size
+    int buffer_;  // GPU buffer size in MB
 
     // Constructor
     ConstructIndexKernel(
-        const string& refFileName, 
-        const string& vcfFileName, 
-        const string& inputGraphFileName, 
-        const string& outputGraphFileName, 
-        const bool& fastMode, 
-        const bool& useUniqueKmers, 
-        const uint32_t& kmerLen, 
-        const uint32_t& vcfPloidy, 
-        const bool& debug, 
-        const uint32_t& threads, 
+        const string& refFileName,
+        const string& vcfFileName,
+        const string& inputGraphFileName,
+        const string& outputGraphFileName,
+        const bool& fastMode,
+        const bool& useUniqueKmers,
+        const uint32_t& kmerLen,
+        const uint32_t& vcfPloidy,
+        const bool& debug,
+        const uint32_t& threads,
         const int buffer
     );
 
@@ -48,7 +48,7 @@ public:
      * @date 2024/04/29
      * @version v1.0.1
      * @brief Making Counting Bloom Filter
-     * 
+     *
      * @return void
     **/
     void make_mbf_kernel();
@@ -58,7 +58,7 @@ public:
      * @date 2024/04/28
      * @version v1.0
      * @brief building the k-mer index of graph on GPU
-     * 
+     *
      * @return void
     **/
     void index_kernel();
@@ -66,9 +66,9 @@ public:
 
 /**
  * @brief graph index for k-mer on GPU
- * 
+ *
  * @date 2024/04/29
- * 
+ *
  * @param chromosome            mGraphMap output by construct  map<chr, map<start, nodeSrt> >
  * @param nodeIter              node iterator
  * @param startNodeMap          Chromosome all nodes
@@ -78,18 +78,18 @@ public:
  * @param bfD                   Counting Bloom Filter on GPU
  * @param vcfPloidy             ploidy of genotypes in VCF file
  * @param hapIdxQRmap           map<hapIdx, tuple<quotient, remainder> >
- * 
+ *
  * @return {nodeIter, tmpKmerHapBitMap, kmerHashFreMap}     kmer: map<kmerHash, vector<int8_t> >
 **/
 tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >, map<uint64_t, uint8_t> > index_run_kernel(
-    string chromosome, 
-    map<uint32_t, nodeSrt>::iterator nodeIter, 
-    const map<uint32_t, nodeSrt>& startNodeMap, 
-    const bool& fastMode, 
+    string chromosome,
+    map<uint32_t, nodeSrt>::iterator nodeIter,
+    const map<uint32_t, nodeSrt>& startNodeMap,
+    const bool& fastMode,
     const bool& useUniqueKmers,
-    const uint32_t& kmerLen, 
-    BloomFilterKernel* bfD, 
-    const uint32_t& vcfPloidy, 
+    const uint32_t& kmerLen,
+    BloomFilterKernel* bfD,
+    const uint32_t& vcfPloidy,
     const unordered_map<uint16_t, tuple<uint16_t, uint16_t> >& hapIdxQRmap
 );
 

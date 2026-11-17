@@ -3,14 +3,18 @@
 #include "../include/kmer.hpp"
 #include "../include/construct_index.hpp"
 
+#include <condition_variable>
+#include <exception>
+#include <limits>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
 #include "../include/logger.hpp"
 #include "../include/progress_tracker.hpp"
 
 using namespace std;
 
 
-// kseq.h
 KSEQ_INIT(gzFile, read_gzip_checked)
 
 
@@ -30,7 +34,6 @@ ConstructIndex::ConstructIndex(
 
     mHapMap[0] = "reference";
 
-    // debug
     if (debug) threads_ = 1;
 }
 
@@ -55,7 +58,7 @@ void ConstructIndex::clear_mbf() {
         delete mbf;
         mbf = nullptr;
     }
-    malloc_trim(0);	// 0 is for heap memory
+    malloc_trim(0);
 }
 
 /**
@@ -70,7 +73,7 @@ void ConstructIndex::clear_mGraphKmerCovFreMap() {
     // Clear unordered_map
     unordered_map<uint64_t, kmerCovFreBitVec>().swap(mGraphKmerHashHapStrMap);
 
-    malloc_trim(0);	// 0 is for heap memory
+    malloc_trim(0);
 }
 
 /**
@@ -135,7 +138,7 @@ void ConstructIndex::build_fasta_index()
     log_stream() << "  - Size of reference genome: " << mGenomeSize / 1000.0 / 1000.0 << " Mb" << endl;
     diagnostic_stream() << defaultfloat << setprecision(6);
 
-    malloc_trim(0);	// 0 is for heap memory
+    malloc_trim(0);
 }
 
 
@@ -161,11 +164,7 @@ void ConstructIndex::make_mbf() {
     for (const auto& [chromosome, sequence] : mFastaSeqMap) {  // map<chromosome, sequence>
         // Constructing k-mer index
         kmerBit::kmer_sketch_bf(sequence, mKmerLen, mbf);
-
-        log_stream() << "  - Chromosome '" << chromosome << "' processed successfully ...\n";
     }
-
-    log_stream() << "  - Counting Bloom Filter constructed successfully ..." << endl;
 
     log_stream() << "  - Counting Bloom Filter size: " << mbf->get_size() << endl;
     log_stream() << "  - Hash functions count: " << mbf->get_num() << endl;
@@ -173,7 +172,7 @@ void ConstructIndex::make_mbf() {
     log_stream() << "  - Counting Bloom Filter usage rate: " << mbf->get_cap() << endl;
     diagnostic_stream() << defaultfloat << setprecision(6);
 
-    malloc_trim(0);	// 0 is for heap memory
+    malloc_trim(0);
 }
 
 
@@ -590,13 +589,21 @@ void ConstructIndex::vcf_construct(
  * @return void
 **/
 void ConstructIndex::index() {
+    index_graph([this](const string& chromosome, map<uint32_t, nodeSrt>::iterator node, const map<uint32_t, nodeSrt>& nodes) {
+        return construct_index::index_run(chromosome, node, nodes, fastMode_, useUniqueKmers_, mKmerLen, mbf, mVcfPloidy, mHapIdxQRmap);
+    });
+}
+
+
+// Index nodes in parallel and merge the results in graph order on one thread while later nodes are still indexed (frequency updates and serialization depend on this order).
+void ConstructIndex::index_graph(const NodeIndexer& index_node) {
     stage_stream() << "Indexing the genome graph ...\n";
 
-    using IndexResult = tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t>>, map<uint64_t, uint8_t>>;
     struct NodeTask {
         map<string, map<uint32_t, nodeSrt>>::iterator chromosome;
         map<uint32_t, nodeSrt>::iterator node;
         IndexResult result;
+        bool done = false;  // guarded by taskMutex
     };
 
     size_t taskNum = 0;
@@ -609,13 +616,12 @@ void ConstructIndex::index() {
     tasks.reserve(taskNum);
     for (auto chromosome = mGraphMap.begin(); chromosome != mGraphMap.end(); ++chromosome) {
         for (auto node = chromosome->second.begin(); node != chromosome->second.end(); ++node) {
-            if (node->second.hapGtVec.size() != 1) tasks.push_back({chromosome, node, {}});
+            if (node->second.hapGtVec.size() != 1) tasks.push_back({chromosome, node, {}, false});
         }
     }
     ProgressTracker progress(tasks.size());
-    ThreadPool pool(threads_);
 
-    // Merge in graph order to preserve frequency updates and serialization order.
+    // ------ Merge one node result into the graph ------
     auto merge_result = [&](IndexResult& result) {
         auto& [nodeIter, KmerHapBitMap, kmerHashFreMap] = result;
         if (KmerHapBitMap.empty()) return;
@@ -663,22 +669,70 @@ void ConstructIndex::index() {
 
     };
 
-    // Workers claim subsequent nodes without waiting for an earlier node to finish.
-    pool.parallel_for(tasks.size(), [&](size_t index) {
-        auto& task = tasks[index];
-        task.result = construct_index::index_run(
-            task.chromosome->first, task.node, task.chromosome->second,
-            fastMode_, useUniqueKmers_, mKmerLen, mbf, mVcfPloidy, mHapIdxQRmap);
-        progress.hit();
-    });
-    pool.stop();
+    // ------ Merge every result in graph order, waiting only for the next one ------
+    mutex taskMutex;
+    condition_variable taskReady;
+    size_t awaiting = numeric_limits<size_t>::max();
+    bool stopped = false;
+    auto merge_all = [&]() {
+        for (size_t index = 0; index < tasks.size(); ++index) {
+            {
+                unique_lock<mutex> lock(taskMutex);
+                awaiting = index;
+                taskReady.wait(lock, [&] { return tasks[index].done || stopped; });
+                awaiting = numeric_limits<size_t>::max();
+                if (!tasks[index].done) return;
+            }
+            auto result = move(tasks[index].result);
+            merge_result(result);
+            progress.hit();
+        }
+    };
 
-    stage_stream() << "Merging indexed nodes ...\n";
-    for (auto& task : tasks) {
-        // Release each consumed result immediately, preserving the original graph order.
-        auto result = move(task.result);
-        merge_result(result);
+    exception_ptr mergeError;
+    thread merger;
+    if (threads_ > 1) {
+        merger = thread([&] {
+            try {
+                merge_all();
+            } catch (...) {
+                mergeError = current_exception();
+            }
+        });
     }
+
+    // ------ Workers claim subsequent nodes and never wait for the merge ------
+    try {
+        ThreadPool pool(threads_);
+        pool.parallel_for(tasks.size(), [&](size_t index) {
+            auto& task = tasks[index];
+            task.result = index_node(task.chromosome->first, task.node, task.chromosome->second);
+            if (threads_ <= 1) {
+                auto result = move(task.result);
+                merge_result(result);
+                progress.hit();
+                return;
+            }
+            bool notify;
+            {
+                lock_guard<mutex> lock(taskMutex);
+                task.done = true;
+                notify = awaiting == index;
+            }
+            if (notify) taskReady.notify_one();
+        });
+    } catch (...) {
+        {
+            lock_guard<mutex> lock(taskMutex);
+            stopped = true;
+        }
+        taskReady.notify_one();
+        if (merger.joinable()) merger.join();
+        throw;
+    }
+    if (merger.joinable()) merger.join();
+    if (mergeError) rethrow_exception(mergeError);
+
     vector<NodeTask>().swap(tasks);
     malloc_trim(0);
 }
@@ -704,8 +758,7 @@ void ConstructIndex::graph2node() {
     ThreadPool pool(threads_);
     pool.parallel_for(nodes.size(), [&](size_t index) {
         auto& node = *nodes[index];
-        construct_index::graph2node_run(node.kmerHashVec, node.GraphKmerHashHapStrMapIterVec,
-                                       mGraphKmerHashHapStrMap);
+        construct_index::graph2node_run(node.kmerHashVec, node.GraphKmerHashHapStrMapIterVec, mGraphKmerHashHapStrMap);
     });
     pool.stop();
     malloc_trim(0);
@@ -960,9 +1013,9 @@ void ConstructIndex::load_index() {
                 read(info.data(), infoLength);
                 infoVec.push_back(std::move(info));
             }
-            startVecMap[start] = infoVec;
+            startVecMap[start] = std::move(infoVec);
         }
-        mVcfInfoMap[chrName] = startVecMap;
+        mVcfInfoMap[chrName] = std::move(startVecMap);
     }
 
     /* -------------------------------------------------- mHapNum and mHapMap  -------------------------------------------------- */
@@ -1027,7 +1080,7 @@ void ConstructIndex::load_index() {
                 require_bytes(seqLen);
                 seq.resize(seqLen);
                 read(seq.data(), seqLen);
-                nodeSrtData.seqVec.push_back(seq);
+                nodeSrtData.seqVec.push_back(std::move(seq));
             }
 
             // Read the genotype information.
@@ -1053,7 +1106,6 @@ void ConstructIndex::load_index() {
     mGraphKmerHashHapStrMap.clear();
 
     uint64_t kmerHash;
-    kmerCovFreBitVec kmerCovFreBitVecStr;
     uint8_t c;
     uint8_t f;
     uint64_t BitVecLen;
@@ -1079,11 +1131,11 @@ void ConstructIndex::load_index() {
         vector<int8_t> BitVec(BitVecLen);
         read(reinterpret_cast<char*>(BitVec.data()), BitVecLen);
 
-        // Store data in the map
-        kmerCovFreBitVecStr.c = c;
-        kmerCovFreBitVecStr.f = f;
-        kmerCovFreBitVecStr.BitVec = BitVec;
-        mGraphKmerHashHapStrMap[kmerHash] = kmerCovFreBitVecStr;
+        // Store data in the map (same fields as kmerCovFreBitVec::operator=, without copying the bitmap)
+        auto& entry = mGraphKmerHashHapStrMap[kmerHash];
+        entry.c = c;
+        entry.f = f;
+        entry.BitVec = std::move(BitVec);
     }
 
     // Close the file
@@ -1201,10 +1253,8 @@ tuple<map<uint32_t, nodeSrt>::iterator, unordered_map<uint64_t, vector<int8_t> >
             MIN_KMER_FRE = min(MIN_KMER_FRE, frequency);
         }
 
-        // clear memory (freKmerHashSetMap)
         map<uint8_t, unordered_set<uint64_t> >().swap(freKmerHashSetMap);
 
-        // Haplotype index increment
         ++haplotype;
     }
 
